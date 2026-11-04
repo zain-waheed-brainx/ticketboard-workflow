@@ -436,6 +436,10 @@ class Board {
     if (patch.status === 'done' && x.status !== 'done' && x.test?.command && !x.testRuns?.after?.passed && !force) {
       throw new Error(`${taskId}'s test hasn't passed after the code yet (${this.testState(x)}). Run: board test ${t.id} ${taskId}, or mark it done anyway with force`);
     }
+    // Re-sending the commit already on the task is a no-op (it may be on base by now, after a merge).
+    const sameCommit = patch.commit && x.commit && (patch.commit === x.commit || tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${patch.commit}^{commit}`], this.root) === x.commit);
+    if (sameCommit) patch = { ...patch, commit: x.commit };
+    else if (patch.commit) patch = { ...patch, commit: this.checkCommit(t, patch.commit, { tasks: tk.commitMode === 'single' ? [] : tk.tasks, exceptTask: taskId }) };
     const changes = {};
     for (const k of ['status', 'commit', 'note', 'parallel']) {
       if (patch[k] === undefined) continue;
@@ -530,9 +534,35 @@ class Board {
     return 'not-run';
   }
 
+  // A recorded commit must really be this ticket's work: an existing commit on the ticket's branch that the
+  // base branch doesn't have, and not one already recorded for another task. Catches recording a stale HEAD
+  // (the previous task's commit, or the wrong checkout's) after a hook such as a review blocked the commit.
+  checkCommit(t, sha, { tasks = [], exceptTask } = {}) {
+    const s = String(sha || '').trim();
+    const full = !s.startsWith('-') && tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${s}^{commit}`], this.root);
+    if (!full) throw new Error(`Commit ${s} doesn't exist. Did the commit go through? A commit hook (e.g. a review) may have blocked it`);
+    if (!t.branch) throw new Error(`${t.id} has no branch yet, so no commit can be recorded`);
+    if (!this.branchExists(t.branch)) throw new Error(`${t.id}'s branch ${t.branch} doesn't exist locally, so the commit can't be checked`);
+    // merge-base --is-ancestor exits 0 (yes) or 1 (no); both refs are known to resolve here, so null means "no".
+    if (tryGit(['merge-base', '--is-ancestor', full, `refs/heads/${t.branch}`], this.root) === null) {
+      throw new Error(`Commit ${full.slice(0, 7)} isn't on ${t.id}'s branch ${t.branch}. Commit from the ticket's worktree (${t.worktree}) and record that commit`);
+    }
+    // A base that no longer resolves (e.g. a deleted remote branch) can't be compared, so that check is skipped.
+    const base = t.baseBranch && tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${t.baseBranch}^{commit}`], this.root);
+    if (base && tryGit(['merge-base', '--is-ancestor', full, base], this.root) !== null) {
+      throw new Error(`Commit ${full.slice(0, 7)} is already on the base branch ${t.baseBranch}, so it isn't this ticket's work. Did the commit go through?`);
+    }
+    // Per-task commits are one per task (in single mode every task shares the one commit, so no list is passed).
+    const resolve = c => tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${c}^{commit}`], this.root);
+    const other = tasks.find(o => o.id !== exceptTask && o.commit && (o.commit === full || resolve(o.commit) === full));
+    if (other) throw new Error(`Commit ${full.slice(0, 7)} is already recorded for ${other.id}. Did this commit go through? A commit hook (e.g. a review) may have blocked it`);
+    return full;
+  }
+
   // Single-commit mode: record the one commit on every finished task that doesn't have one yet.
   recordCommit(id, sha, actor) {
     const tk = this.tasks(id);
+    sha = this.checkCommit(this.get(id), sha, { tasks: tk.tasks });
     const marked = tk.tasks.filter(x => x.status === 'done' && !x.commit);
     marked.forEach(x => { x.commit = sha; });
     writeJSON(this.tasksFile(id), tk);
