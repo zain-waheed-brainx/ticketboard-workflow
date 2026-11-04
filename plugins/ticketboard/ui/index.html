@@ -151,8 +151,7 @@ body.noscroll { overflow: hidden; }
         <button id="dStart" class="primary">Start work</button>
         <button id="dShare"></button>
         <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
-        <button id="dPr" title="Copy the chat command that opens a PR for this ticket">Open PR</button>
-        <button id="dPrLink" title="Opened the PR in the browser? Paste its URL here to track it">Add PR link</button>
+        <button id="dPr" title="Check it's ready, push, and open the pull request on GitHub">Open PR</button>
         <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
         <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
         <button id="dReopen" title="QA issue or client change: start a new round with a new branch and worktree, keeping all history">Reopen</button>
@@ -234,6 +233,25 @@ body.noscroll { overflow: hidden; }
   </div>
   <div class="err" id="xErr"></div>
   <div class="actions"><button data-close>Cancel</button><button class="primary danger" id="xGo" style="background:var(--danger);border-color:var(--danger);color:#fff">Delete</button></div>
+</div></div>
+
+<div class="modal" id="mPr"><div class="mbox">
+  <h3>Open a PR for <span id="pId"></span></h3>
+  <div id="pBody" class="hint">Checking…</div>
+  <div class="actions" style="justify-content:flex-start;margin-top:8px"><button id="pPush">Push branch</button></div>
+  <label>Title</label>
+  <div style="display:flex;gap:6px"><input id="pTitle" class="w100"><button id="pCopyTitle">Copy</button></div>
+  <label>Description</label>
+  <div style="display:flex;gap:6px;align-items:flex-start"><textarea id="pDesc" class="w100" rows="6"></textarea><button id="pCopyDesc">Copy</button></div>
+  <div class="actions" style="justify-content:flex-start">
+    <button class="primary" id="pGitHub">Open on GitHub ↗</button>
+    <span class="hint" id="pNoGitHub">origin isn't a GitHub remote: open the PR on your git host.</span>
+  </div>
+  <div class="hint">Create it as <b>ready for review</b>, then paste its URL here. <a href="#" id="pAskClaude">Or copy the chat command</a> to let Claude write the description and handle review comments.</div>
+  <label>PR URL</label>
+  <input id="pUrl" class="w100" placeholder="https://github.com/org/repo/pull/42" autocomplete="off">
+  <div class="err" id="pErr"></div>
+  <div class="actions"><button data-close>Close</button><button class="primary" id="pSave">Save PR link</button></div>
 </div></div>
 
 <div class="toast" id="toast"></div>
@@ -331,7 +349,6 @@ async function loadTicket(id, quiet) {
   if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span>${S.config.pr?.gh === 'off' ? '' : ' <a href="#" id="dPrRefresh">refresh</a>'}`;
   if (t.round > 1) $('#dBranch').innerHTML += `<br>Round ${esc(t.round)}: ${esc(t.reopenReason || '')}`;
   $('#dPr').style.display = t.branch && !t.pr ? '' : 'none';
-  $('#dPrLink').style.display = t.branch && !t.pr ? '' : 'none';
   $('#dPrMerged').style.display = t.pr?.state === 'open' ? '' : 'none';
   $('#dCleanup').style.display = t.pr?.state === 'merged' && t.worktree && t.worktree !== S.root ? '' : 'none';
   // Reopen once the round is finished and its worktree is cleaned up (a new round gets a fresh worktree).
@@ -541,16 +558,57 @@ $('#dResume').onclick = async () => {
   const cmd = `/ticketboard:resume ${open}`;
   try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
 };
-$('#dPr').onclick = async () => {
-  const cmd = `/ticketboard:pr ${open}`;
-  try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+// Open PR panel: ready check, push, title/description to copy, GitHub link, then record the PR URL.
+let prInfo = null;
+const copyText = async (text, what) => {
+  try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { prompt(`Copy the ${what.toLowerCase()}:`, text); }
 };
-$('#dPrLink').onclick = async () => {
-  const url = prompt('Paste the PR URL (e.g. https://github.com/org/repo/pull/42)');
-  if (!url || !url.trim()) return;
-  try { const t = await api('PUT', `/api/tickets/${open}/pr`, { url: url.trim() }); toast(`PR #${t.pr.number} recorded; moved to ${t.column}`); } catch (e) { alert(e.message); }
-  load();
+async function renderPrPanel() {
+  // Start empty, so nothing from another ticket's panel can be pushed, copied or opened.
+  prInfo = null;
+  $('#pId').textContent = open; $('#pErr').textContent = '';
+  $('#pBody').innerHTML = 'Checking…';
+  $('#pTitle').value = ''; $('#pDesc').value = ''; $('#pUrl').value = '';
+  ['#pPush', '#pGitHub', '#pCopyTitle', '#pCopyDesc'].forEach(sel => { $(sel).disabled = true; });
+  $('#pPush').style.display = 'none'; $('#pGitHub').style.display = 'none'; $('#pNoGitHub').style.display = 'none';
+  try { prInfo = await api('GET', `/api/tickets/${open}/pr-check`); } catch (e) { $('#pBody').innerHTML = ''; return $('#pErr').textContent = e.message; }
+  $('#pPush').disabled = false; $('#pCopyTitle').disabled = false; $('#pCopyDesc').disabled = false;
+  const c = prInfo;
+  const ready = c.ready ? `<div style="color:var(--ok)">✓ Ready: ${c.hasTasks ? 'tasks done, all tests passed, ' : ''}everything committed</div>`
+    : `<div style="color:var(--danger)">${c.reasons.map(r => `⚠ ${esc(r)}`).join('<br>')}</div><div class="hint">Finish these first (<code>/ticketboard:build ${esc(open)}</code>). You can still open the PR, but it isn't ready.</div>`;
+  const pushed = c.pushed ? `<div style="color:var(--ok)">✓ Pushed to <code>${esc(c.upstream)}</code></div>`
+    : `<div style="color:var(--warn)">${c.upstream ? `${esc(c.unpushed)} commit(s) not pushed to <code>${esc(c.upstream)}</code>` : 'Not pushed yet'}</div>`;
+  $('#pBody').innerHTML = `${ready}<p><code>${esc(c.branch)}</code> → <code>${esc(c.base)}</code></p>${pushed}`;
+  $('#pPush').style.display = c.pushed ? 'none' : '';
+  $('#pTitle').value = c.title; $('#pDesc').value = c.body;
+  $('#pGitHub').style.display = c.compareUrl ? '' : 'none';
+  $('#pNoGitHub').style.display = c.compareUrl ? 'none' : '';
+  $('#pGitHub').disabled = !c.pushed;
+  $('#pGitHub').title = c.pushed ? 'Opens GitHub\'s new pull request page' : 'Push the branch first';
+  $('#pUrl').value = '';
+}
+$('#dPr').onclick = () => { $('#mPr').classList.add('open'); renderPrPanel(); };
+$('#pPush').onclick = async () => {
+  if (!prInfo) return;
+  if (!confirm(`Push ${prInfo.branch} to origin?`)) return;
+  $('#pPush').disabled = true; $('#pPush').textContent = 'Pushing…';
+  try { await api('POST', `/api/tickets/${open}/push`, { confirm: true }); toast('Pushed'); } catch (e) { $('#pErr').textContent = e.message; }
+  $('#pPush').disabled = false; $('#pPush').textContent = 'Push branch';
+  renderPrPanel();
 };
+$('#pCopyTitle').onclick = () => copyText($('#pTitle').value, 'Title');
+$('#pCopyDesc').onclick = () => copyText($('#pDesc').value, 'Description');
+$('#pGitHub').onclick = () => { if (!prInfo?.compareUrl) return; window.open(prInfo.compareUrl, '_blank', 'noopener,noreferrer'); };
+$('#pAskClaude').onclick = e => { e.preventDefault(); copyText(`/ticketboard:pr ${open}`, 'Chat command'); };
+$('#pSave').onclick = async () => {
+  const url = $('#pUrl').value.trim();
+  if (!url) return $('#pErr').textContent = 'Paste the PR URL from GitHub first.';
+  try {
+    const t = await api('PUT', `/api/tickets/${open}/pr`, { url });
+    $('#mPr').classList.remove('open'); toast(`PR #${t.pr.number} recorded; moved to ${t.column}`); load();
+  } catch (e) { $('#pErr').textContent = e.message; }
+};
+$('#pUrl').onkeydown = e => { if (e.key === 'Enter') $('#pSave').click(); };
 $('#dPrMerged').onclick = async () => {
   const t = openData.ticket;
   if (!confirm(`Mark PR #${t.pr.number} as merged? Only do this once it's merged on GitHub.`)) return;

@@ -103,6 +103,11 @@ function routes(b) {
     ['PUT', /^\/api\/tickets\/([\w-]+)\/run-mode$/, ([, id], body) => b.setRunMode(id, body.mode, ACTOR)],
     ['PUT', /^\/api\/tickets\/([\w-]+)\/done-when\/(\d+)$/, ([, id, n], body) => b.checkDoneWhen(id, Number(n), body.checked !== false, ACTOR)],
     ['PATCH', /^\/api\/tickets\/([\w-]+)$/, ([, id], body) => b.update(id, body, ACTOR)],
+    ['GET', /^\/api\/tickets\/([\w-]+)\/pr-check$/, ([, id]) => b.prCheck(id)],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/push$/, ([, id], body) => {
+      if (body.confirm !== true) throw new Error('Pushing needs confirm: true');
+      return b.pushBranch(id, { actor: ACTOR });
+    }],
     // Refreshing asks GitHub and may update the ticket, so it's a POST.
     ['POST', /^\/api\/tickets\/([\w-]+)\/pr\/refresh$/, ([, id]) => b.refreshPr(id, ACTOR)],
     ['PUT', /^\/api\/tickets\/([\w-]+)\/pr$/, ([, id], body) => (body.url || body.number

@@ -40,7 +40,7 @@ Pick the ticket from the arguments, or with `board which`. Then pick the step:
      1. Give them pr-check's `compareUrl`, which opens GitHub's "new pull request" page for `<base>...<branch>`. If it's null (not a GitHub remote), give the branch and base so they can open the PR on their host.
      2. Give them the title and the body, each in its own code block, so they're easy to copy.
      3. Tell them to create it as **ready for review**, not a draft.
-     4. Ask them to paste the PR URL once it's open, then run `board pr-record <id> <url>`. They can also use the **Add PR link** button on the board.
+     4. Ask them to paste the PR URL once it's open, then run `board pr-record <id> <url>`. They can also paste it in the board's **Open PR** panel, which has the same link, title and description.
 6. The card moves to **review**. Tell them reviewers' comments are handled with `/ticketboard:pr <id>` (or `/ticketboard:resume <id>`).
 
 ## comments

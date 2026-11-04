@@ -1,11 +1,11 @@
 ---
-diff_hash: a2bf156d64d230b17e577c61a4791be89014cc3290e7de8f3d4e9e162970aded
-reviewed_at: 2026-11-04T13:08:14Z
+diff_hash: 801c09a32ca0e383af9f38b799e03a84953567cb9a78960d498ffd8090761e35
+reviewed_at: 2026-11-04T13:18:16Z
 ---
 
 ## Summary
 
-Adds an opt-out for the GitHub CLI in ticketboard: a `pr.gh` setting (`auto`/`off`) from the team profile or local config, a `board gh auto|off` command, `Board.setGhMode`, a browser compare URL in `prCheck`, UI buttons to record a PR URL and mark it merged by hand, and matching pr/setup skill text. No stack marker matched (no package.json etc.), so a generic review was applied. The change is sound: the compare URL is URL-encoded and limited to GitHub remotes, the new UI buttons call existing server routes, and `gh()` short-circuits before spawning when off. Two low-impact issues. The previous review file is removed in this diff.
+Replaces the "copy chat command" Open PR / Add PR link buttons with an in-board "Open PR" panel: a readiness check, a never-forced `git push` endpoint (`POST /api/tickets/:id/push`, needs `confirm: true`), copyable title/description, a GitHub compare link, and PR URL recording. Stack: no framework marker matched (plain Node server + vanilla HTML UI), so a generic review was applied. `git push` is spawned with an argv array (no shell injection) and prompts are disabled.
 
 ## Findings
 
@@ -13,22 +13,21 @@ Adds an opt-out for the GitHub CLI in ticketboard: a `pr.gh` setting (`auto`/`of
 
 ### High (0)
 
-### Medium (0)
+### Medium (1)
+- **plugins/ticketboard/ui/index.html:566** — `renderPrPanel` keeps the previous `prInfo` and the old title/description in the form when the `pr-check` request fails. The `pPush`/`pGitHub` handlers and the copy buttons then act on stale data from another ticket. *(correctness)*
+  - status: open
+  - dev_reasoning: N/A
+  - ai_reasoning: Set `prInfo = null` and clear the fields before the fetch, and disable the buttons (or guard the handlers) when it fails. Otherwise a failed check after viewing ticket A can show A's branch, title and compare URL in ticket B's panel.
 
-### Low (0)
-- **plugins/ticketboard/lib/store.js:1041** — With `pr.gh = 'off'`, `gh()` returns undefined, so `refreshPr` returns `gh: false` and the CLI `board pr` prints "gh not installed: state is as last recorded", which is wrong when gh was turned off on purpose. `bin/board` already distinguishes the two cases in `pr-check`. *(consistency)*
-  - status: fixed
+### Low (1)
+- **plugins/ticketboard/lib/store.js:1122** — When the 60s timeout kills the push, `close` fires with `code === null`, so the user sees "Push failed: git exited with null" instead of a timeout message. *(maintainability)*
+  - status: open
   - dev_reasoning: N/A
-  - ai_reasoning: Fixed: the `pr` command now says "gh is off" when `config().pr.gh === 'off'`. (Was: have the `pr` command's message use the config mode (e.g. "gh is off") the way `pr-check` does.)
-- **plugins/ticketboard/lib/store.js:1042** — `config().pr.gh` is read straight from the committed profile or local config with no validation; only `setGhMode` checks the value. A hand-edited `"pr": {"gh": "OFF"}` or a non-object `pr` silently behaves as `auto`, so gh runs in an org that forbids it. *(correctness)*
-  - status: fixed
-  - dev_reasoning: N/A
-  - ai_reasoning: Fixed: `config()` now runs `normPr`, which lowercases and treats anything but auto as off, and ignores a non-object `pr`. (Was: normalize in `config()` or in `gh()` (lowercase, accept only auto/off, otherwise fall back to auto with a warning.)
+  - ai_reasoning: Track a `timedOut` flag set in the timer and report "Push timed out after 60s". Also consider `SIGKILL` or killing the process group, since `ssh` children may outlive `SIGTERM` to git.
 
 ## Reviewed files
-- .code-reviews/brainx-review.md (deleted)
-- plugins/ticketboard/bin/board
+- .code-reviews/brainx-review.md (deleted, previous review; not reviewed)
+- plugins/ticketboard/lib/server.js
 - plugins/ticketboard/lib/store.js
 - plugins/ticketboard/skills/pr/SKILL.md
-- plugins/ticketboard/skills/setup/SKILL.md
 - plugins/ticketboard/ui/index.html

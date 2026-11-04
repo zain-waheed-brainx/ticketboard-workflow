@@ -1092,7 +1092,7 @@ class Board {
     const unpushed = upstream ? (tryGit(['log', '--oneline', `${upstream}..${t.branch}`], this.root) || '').split('\n').filter(Boolean).length : null;
     const round = t.round || 1;
     return {
-      id: t.id, ready: reasons.length === 0, reasons, branch: t.branch, base, worktree: wt, round,
+      id: t.id, ready: reasons.length === 0, reasons, branch: t.branch, base, worktree: wt, round, hasTasks: this.hasTasks(t.id),
       upstream, unpushed, pushed: !!upstream && unpushed === 0, gh: this.hasGh(), ghMode: this.config().pr.gh, pr: t.pr || null,
       compareUrl: t.branch ? this.compareUrl(base, t.branch) : null,
       // Minimal description: the title plus a few lines of what changed.
@@ -1100,6 +1100,38 @@ class Board {
       body: [...commits.slice(0, 8).reverse().map(c => `- ${c}`), commits.length > 8 ? `- …and ${commits.length - 8} more` : '', '', `Ticket: ${t.id}${round > 1 ? `, round ${round}` : ''}`]
         .filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n').trim()
     };
+  }
+
+  // Push the ticket's branch to origin (never forced). Async with a timeout and no credential prompts, so
+  // the board server never hangs waiting for input; git uses the credentials it already has.
+  pushBranch(id, { actor } = {}) {
+    const t = this.get(id);
+    if (!t.branch) throw new Error(`${t.id} has no branch to push`);
+    const cwd = t.worktree && fs.existsSync(t.worktree) ? t.worktree : this.root;
+    if (tryGit(['remote', 'get-url', 'origin'], this.root) === null) throw new Error('This repo has no "origin" remote to push to');
+    return new Promise((resolve, reject) => {
+      // Own process group (detached), so a timeout also kills the ssh child git started.
+      const p = spawn('git', ['push', '-u', 'origin', `refs/heads/${t.branch}:refs/heads/${t.branch}`], {
+        cwd, detached: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' }
+      });
+      let out = '', timedOut = false;
+      p.stdout.on('data', d => { out += d; });
+      p.stderr.on('data', d => { out += d; });
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try { process.kill(-p.pid, 'SIGKILL'); } catch { p.kill('SIGKILL'); }
+      }, 60000);
+      const fail = msg => reject(Object.assign(new Error(msg), { stderr: msg }));
+      p.on('error', e => { clearTimeout(timer); reject(e); });
+      p.on('close', code => {
+        clearTimeout(timer);
+        out = out.slice(-4000).trim();
+        if (timedOut) return fail(`Push timed out after 60s${out ? `: ${out}` : ''}. Check your network and that git can push without asking for a password`);
+        if (code !== 0) return fail(`Push failed: ${out || `git exited with ${code}`}`);
+        this.log(t.id, 'pushed', { branch: t.branch }, actor);
+        resolve({ pushed: true, branch: t.branch, output: out });
+      });
+    });
   }
 
   // Browser link to open a PR without gh (GitHub remotes only; null for others).
