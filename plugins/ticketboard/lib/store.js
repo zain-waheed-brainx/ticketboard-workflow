@@ -48,6 +48,17 @@ function statusLines(cwd, extra = []) {
   } catch { return []; }
 }
 
+// A ticket worktree's changes, split into real work and the untracked files worktree setup created
+// (.claude/launch.json, a copied .env). Setup files are never work to commit or lose.
+function worktreeChanges(t) {
+  const generated = new Set(t.generatedFiles || []);
+  const work = [], setup = [];
+  for (const l of statusLines(t.worktree, ['--untracked-files=all'])) {
+    (l.startsWith('?? ') && generated.has(l.slice(3)) ? setup : work).push(l);
+  }
+  return { work, setup: setup.map(l => l.slice(3)) };
+}
+
 // A task's test: { command, description } or { manual: "<why it can't be automated>", description }.
 function normTest(t) {
   if (!t) return {};
@@ -305,8 +316,7 @@ class Board {
     }
     if (exists && !isMain) {
       // Files bootstrap created (copied .env, launch.json) aren't work you'd lose.
-      const generated = new Set(t.generatedFiles || []);
-      r.dirty = statusLines(wt, ['--untracked-files=all']).filter(l => !(l.startsWith('?? ') && generated.has(l.slice(3))));
+      r.dirty = worktreeChanges(t).work;
       if (r.dirty.length) r.reasons.push(`${r.dirty.length} uncommitted or untracked file(s) in the worktree`);
     }
     r.safe = r.reasons.length === 0;
@@ -1000,8 +1010,10 @@ class Board {
     if (t.branch && t.worktree && fs.existsSync(t.worktree)) {
       const base = t.baseBranch || 'HEAD';
       const log = tryGit(['log', '--oneline', `${base}..${t.branch}`], t.worktree) || '(no commits yet)';
-      const status = tryGit(['status', '--short'], t.worktree) || '(clean)';
-      gitInfo = `\n## Git (${t.branch} vs ${base})\nCommits:\n${log}\n\nWorking tree:\n${status}\n`;
+      const ch = worktreeChanges(t);
+      const status = ch.work.join('\n') || '(clean)';
+      const setup = ch.setup.length ? `\nSetup files (created by worktree setup, not work to commit): ${ch.setup.join(', ')}` : '';
+      gitInfo = `\n## Git (${t.branch} vs ${base})\nCommits:\n${log}\n\nWorking tree:\n${status}${setup}\n`;
     } else if (t.worktree) {
       gitInfo = `\n## Git\nWorktree ${t.worktree} no longer exists. Branch: ${t.branch}\n`;
     }
@@ -1082,7 +1094,7 @@ class Board {
       else if (!tk.finalRun.ok) reasons.push('all tests together failed on the last run');
     }
     const dirty = wt && fs.existsSync(wt)
-      ? statusLines(wt, ['--untracked-files=all']).filter(l => !(l.startsWith('?? ') && (t.generatedFiles || []).includes(l.slice(3)))) : [];
+      ? worktreeChanges(t).work : [];
     if (dirty.length) reasons.push(`${dirty.length} uncommitted file(s) in the worktree`);
     const base = t.baseBranch || this.detectBase();
     const range = t.branch ? `${base}..${t.branch}` : null;
