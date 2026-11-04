@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ticketboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel2: #f0f2f5; --text: #1b1f24; --muted: #667085;
+  --border: #dde1e6; --accent: #3b6ef5; --accent-text: #fff; --danger: #d14343; --ok: #1f9d55; --warn: #c98a04;
+  --feature: #3b6ef5; --hotfix: #d14343; --enhancement: #8a4bd6; --bugfix: #e07a1f; --chore: #667085;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --panel: #1a1d23; --panel2: #22262d; --text: #e6e8eb; --muted: #99a1ad;
+    --border: #2e333b; --accent: #6b8cff; --accent-text: #0d1020; --shadow: none;
+    color-scheme: dark; /* dark native scrollbars */
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111317; --panel: #1a1d23; --panel2: #22262d; --text: #e6e8eb; --muted: #99a1ad;
+  --border: #2e333b; --accent: #6b8cff; --accent-text: #0d1020; --shadow: none;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+/* The page never scrolls: the board fills the window, scrolls sideways at the bottom edge, and each column scrolls its own cards. */
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--danger); }
+button.ghost { background: none; border-color: transparent; }
+input, select, textarea { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+textarea { width: 100%; resize: vertical; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+code { font: 12px ui-monospace, Menlo, monospace; background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+
+header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0; z-index: 5; }
+#setupBanner { flex-shrink: 0; }
+header h1 { font-size: 16px; margin: 0; }
+header .repo { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.live { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.live.off { background: var(--danger); }
+
+.board { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 16px; overflow-x: auto; overflow-y: hidden; align-items: flex-start; }
+.col { flex: 0 0 260px; max-height: 100%; display: flex; flex-direction: column; background: var(--panel2); border-radius: 10px; padding: 8px; }
+.cards { overflow-y: auto; overscroll-behavior: contain; }
+.col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 4px 6px 8px; display: flex; justify-content: space-between; }
+.col.drop { outline: 2px dashed var(--accent); }
+.cards { min-height: 40px; display: flex; flex-direction: column; gap: 8px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; box-shadow: var(--shadow); }
+.card:hover { border-color: var(--accent); }
+.card .top { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); }
+.card .title { margin: 6px 0; font-weight: 500; }
+.card .branch { font: 11px ui-monospace, Menlo, monospace; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prog { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.bar { flex: 1; height: 5px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); }
+.task { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.task.done { opacity: .6; }
+.task .row1 { display: flex; gap: 8px; align-items: flex-start; }
+.task .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.task details { margin-top: 6px; font-size: 13px; }
+.task summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.chip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; }
+.t-feature { color: var(--feature); } .t-hotfix { color: var(--hotfix); } .t-enhancement { color: var(--enhancement); }
+.t-bugfix { color: var(--bugfix); } .t-chore { color: var(--chore); }
+.ps { font-size: 11px; }
+.ps-approved, .ps-validated { color: var(--ok); } .ps-drafting, .ps-needs-validation { color: var(--warn); } .ps-none { color: var(--muted); }
+
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; z-index: 10; }
+.overlay.open { display: flex; }
+.drawer { margin-left: auto; width: min(1200px, 100%); height: 100%; background: var(--bg); display: flex; flex-direction: column; border-left: 1px solid var(--border); overscroll-behavior: contain; }
+body.noscroll { overflow: hidden; }
+.dhead { padding: 14px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.dhead .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.dhead input.title { font-size: 18px; font-weight: 600; flex: 1; min-width: 200px; border-color: transparent; background: none; }
+.dhead input.title:focus { border-color: var(--border); background: var(--panel); }
+.meta { margin-top: 10px; gap: 10px !important; }
+.meta .field { display: flex; flex-direction: column; }
+.meta .field label { margin: 0 0 2px; }
+.dbody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; padding: 12px 16px; overflow: hidden; }
+.pane { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
+.pane .ph { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.pane .ph h3 { margin: 0; font-size: 13px; flex: 1; }
+.pane .pb { padding: 12px 16px; overflow: auto; flex: 1; overscroll-behavior: contain; }
+.pane .pb textarea { height: 100%; min-height: 300px; font: 13px/1.5 ui-monospace, Menlo, monospace; border: none; padding: 0; background: none; }
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; flex: 1; min-width: 0; }
+.tabs button { border: none; background: none; padding: 4px 10px; border-radius: 5px; color: var(--muted); }
+.tabs button.on { background: var(--panel2); color: var(--text); }
+.md h1 { font-size: 20px; } .md h2 { font-size: 16px; margin-top: 20px; } .md h3 { font-size: 14px; }
+.md pre { background: var(--panel2); padding: 10px; border-radius: 6px; overflow: auto; }
+.md table { border-collapse: collapse; } .md td, .md th { border: 1px solid var(--border); padding: 4px 8px; }
+.empty { color: var(--muted); text-align: center; padding: 40px 10px; }
+.hist { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.hist li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.hist .when { color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.ver { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font: 12px ui-monospace, Menlo, monospace; }
+
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+.modal.open { display: flex; }
+.mbox { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; width: min(560px, 100%); max-height: 90vh; overflow: auto; padding: 18px; }
+.mbox h3 { margin: 0 0 6px; }
+.mbox .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+.opt:has(input:checked) { border-color: var(--accent); }
+.opt .name { font: 13px ui-monospace, Menlo, monospace; }
+.opt .sub { font-size: 11px; color: var(--muted); }
+.w100 { width: 100%; }
+.hint { font-size: 12px; color: var(--muted); }
+.err { color: var(--danger); font-size: 12px; min-height: 16px; margin-top: 6px; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; display: none; z-index: 30; }
+
+/* Narrow (or short) windows: the whole ticket scrolls as one page instead of boxes scrolling inside boxes. */
+@media (max-width: 760px), (max-height: 560px) {
+  .drawer { display: block; overflow-y: auto; overflow-x: hidden; }
+  .dbody { display: block; overflow: visible; }
+  .pane { overflow: visible; margin-bottom: 12px; }
+  .pane .pb { overflow: visible; }
+  .pane .pb textarea { min-height: 360px; }
+  .pane .ph { position: sticky; top: 0; z-index: 1; background: var(--panel); border-radius: 10px 10px 0 0; }
+}
+@media (max-width: 760px) {
+  .col { flex-basis: 80vw; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ticketboard</h1>
+  <span class="live" id="live" title="Live"></span>
+  <span class="repo" id="repo"></span>
+  <button id="btnSettings">Branch naming</button>
+  <button class="primary" id="btnNew">+ New ticket</button>
+</header>
+<div id="setupBanner" style="display:none;padding:8px 16px;background:var(--panel2);border-bottom:1px solid var(--border);font-size:13px"></div>
+<main class="board" id="board"></main>
+
+<div class="overlay" id="overlay">
+  <div class="drawer" id="drawer">
+    <div class="dhead">
+      <div class="row">
+        <code id="dId"></code>
+        <input class="title" id="dTitle">
+        <button id="dStart" class="primary">Start work</button>
+        <button id="dShare"></button>
+        <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
+        <button id="dDelete" class="danger">Delete</button>
+        <button id="dClose" class="ghost" aria-label="Close">✕</button>
+      </div>
+      <div class="row meta">
+        <div class="field"><label>Type</label><select id="dType"></select></div>
+        <div class="field"><label>Column</label><select id="dColumn"></select></div>
+        <div class="field"><label>Priority</label><select id="dPriority"><option>low</option><option>medium</option><option>high</option><option>urgent</option></select></div>
+        <div class="field"><label>Plan</label><select id="dPlanStatus"><option>none</option><option>drafting</option><option>needs-validation</option><option>validated</option><option>tasks-ready</option><option>approved</option></select></div>
+        <div class="field"><label>Labels</label><input id="dLabels" placeholder="comma,separated"></div>
+        <div class="field" style="flex:1;min-width:200px"><label>Branch / worktree</label><div id="dBranch" class="hint"></div></div>
+      </div>
+    </div>
+    <div class="dbody">
+      <section class="pane">
+        <div class="ph"><h3>Plan</h3><span class="hint" id="planSrc"></span>
+          <span id="planApproved" class="chip" style="color:var(--ok);display:none">✓ Approved</span>
+          <button id="planNeedsTasks" class="ghost" style="display:none;color:var(--warn)" title="Copy the chat command that makes the tasks">Tasks not made yet</button>
+          <button id="planApprove" class="primary" style="display:none">Approve plan</button>
+          <button id="planEdit">Edit</button></div>
+        <div class="pb md" id="planView"></div>
+      </section>
+      <section class="pane">
+        <div class="ph"><div class="tabs" id="tabs">
+          <button data-tab="grill" class="on">Grill-me</button><button data-tab="tasks">Tasks</button><button data-tab="details">Details</button>
+          <button data-tab="history">History</button><button data-tab="versions">Versions</button><button data-tab="context">Context</button><button data-tab="setup">Setup</button>
+        </div></div>
+        <div class="pb" id="side"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="mNew"><div class="mbox">
+  <h3>New ticket</h3>
+  <label>Title</label><input id="nTitle" class="w100" placeholder="e.g. Add CSV export to reports">
+  <div style="display:flex;gap:10px">
+    <div style="flex:1"><label>Type</label><select id="nType" class="w100"></select></div>
+    <div style="flex:1"><label>Priority</label><select id="nPriority" class="w100"><option>low</option><option selected>medium</option><option>high</option><option>urgent</option></select></div>
+  </div>
+  <label>Description</label><textarea id="nDesc" rows="3" placeholder="What and why. Planning happens with /ticketboard:ticket plan."></textarea>
+  <h4 style="margin:16px 0 4px">Branch</h4>
+  <div id="nPicker"></div>
+  <div class="err" id="nErr"></div>
+  <div class="actions"><button data-close>Cancel</button><button class="primary" id="nCreate">Create</button></div>
+</div></div>
+
+<div class="modal" id="mStart"><div class="mbox">
+  <h3>Start work</h3>
+  <p class="hint" id="sHint"></p>
+  <label>Branch type</label><select id="sType"></select>
+  <div id="sPicker"></div>
+  <div class="err" id="sErr"></div>
+  <div class="actions"><button data-close>Cancel</button><button class="primary" id="sGo">Start</button></div>
+</div></div>
+
+<div class="modal" id="mSettings"><div class="mbox">
+  <h3>Branch naming</h3>
+  <p class="hint">The default pattern is used when you start work. Tokens: <code>{type}</code> <code>{id}</code> <code>{ID}</code> <code>{slug}</code> <code>{user}</code> <code>{date}</code></p>
+  <div id="cPatterns"></div>
+  <label>Add pattern</label>
+  <div style="display:flex;gap:6px"><input id="cNewPattern" style="flex:1" placeholder="{type}/{user}/{slug}"><button id="cAddPattern">Add as default</button></div>
+  <label>Branch types</label>
+  <div id="cTypes" class="hint"></div>
+  <div style="display:flex;gap:6px;margin-top:6px"><input id="cNewType" style="flex:1" placeholder="release"><button id="cAddType">Add type</button></div>
+  <div class="err" id="cErr"></div>
+  <div class="actions"><button data-close>Done</button></div>
+</div></div>
+
+<div class="modal" id="mDelete"><div class="mbox">
+  <h3>Delete <span id="xId"></span></h3>
+  <div id="xBody" class="hint">Checking worktree and remote…</div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--text)" id="xBranchRow"><input type="checkbox" id="xBranch"> Also delete the local branch <code id="xBranchName"></code></label>
+  <div id="xForceRow" style="display:none">
+    <label id="xConfirmLabel">Type the ticket id to delete anyway and lose the work above</label>
+    <input id="xConfirm" class="w100" autocomplete="off">
+  </div>
+  <div class="err" id="xErr"></div>
+  <div class="actions"><button data-close>Cancel</button><button class="primary danger" id="xGo" style="background:var(--danger);border-color:var(--danger);color:#fff">Delete</button></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Plans can be imported or shared, so markdown is untrusted: raw HTML is escaped and links/images may only
+// use http(s), mailto or relative URLs (no javascript:, data: or vbscript:).
+const safeUrl = u => { const v = String(u ?? '').trim(); return !/^[a-z][a-z0-9+.-]*:/i.test(v) || /^(https?|mailto):/i.test(v); };
+if (window.marked) {
+  const tok = (a, key) => (a && typeof a === 'object' ? a[key] : a);
+  marked.use({ renderer: {
+    html: h => esc(tok(h, 'text')),
+    // Returning false falls back to marked's own renderer for safe URLs.
+    link(href, title, text) { return safeUrl(tok(href, 'href')) ? false : (typeof href === 'object' ? esc(href.text) : text); },
+    image(href, title, text) { return safeUrl(tok(href, 'href')) ? false : esc(typeof href === 'object' ? href.text : text); }
+  } });
+}
+const md = s => (window.marked ? marked.parse(s) : `<pre>${esc(s)}</pre>`);
+let S = { config: null, tickets: [], rev: '' };
+let open = null, openData = null, tab = 'grill', editingPlan = false;
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2200); }
+function typeChip(t) { return `<span class="chip t-${esc(t)}">${esc(t)}</span>`; }
+function when(ts) { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+function options(sel, list, val) { sel.innerHTML = list.map(x => `<option ${x === val ? 'selected' : ''}>${esc(x)}</option>`).join(''); }
+
+async function load() {
+  S = await api('GET', '/api/state');
+  const banner = $('#setupBanner');
+  banner.style.display = S.project.exists && S.project.trusted ? 'none' : '';
+  banner.innerHTML = !S.project.exists
+    ? '⚠ Project not set up: new worktrees won\'t get dependencies or .env. In Claude, run <code>/ticketboard:setup</code>.'
+    : '⚠ <code>ticketboard.project.json</code> changed since you last reviewed it, so worktree setup is paused. Run <code>/ticketboard:setup</code> to review it.';
+  $('#repo').textContent = S.root;
+  renderBoard();
+  if (open) await loadTicket(open, true);
+}
+
+function renderBoard() {
+  const board = $('#board');
+  board.innerHTML = S.config.columns.map(c => {
+    const ts = S.tickets.filter(t => t.column === c);
+    return `<section class="col" data-col="${esc(c)}"><h2><span>${esc(c)}</span><span>${ts.length}</span></h2><div class="cards">${ts.map(t => `
+      <article class="card" draggable="true" data-id="${esc(t.id)}">
+        <div class="top"><code>${esc(t.id)}</code>${typeChip(t.type)}<span class="ps ps-${esc(t.planStatus)}">● plan ${esc(t.planStatus)}</span></div>
+        <div class="title">${esc(t.title)}</div>
+        ${t.progress ? `<div class="prog" title="${t.progress.done} of ${t.progress.total} tasks done${t.progress.stale ? ' (plan changed since tasks were made)' : ''}"><div class="bar"><i style="width:${Math.round(100 * t.progress.done / t.progress.total)}%"></i></div><span>${t.progress.done}/${t.progress.total}${t.progress.stale ? ' ⚠' : ''}</span></div>` : ''}
+        ${t.branch ? `<div class="branch">⎇ ${esc(t.branch)}</div>` : t.plannedBranch ? `<div class="branch" style="opacity:.7" title="Planned, not created yet">⎇ ${esc(t.plannedBranch)} · planned</div>` : ''}
+      </article>`).join('')}</div></section>`;
+  }).join('');
+  board.querySelectorAll('.card').forEach(el => {
+    el.onclick = () => openTicket(el.dataset.id);
+    el.ondragstart = e => e.dataTransfer.setData('text/plain', el.dataset.id);
+  });
+  board.querySelectorAll('.col').forEach(col => {
+    col.ondragover = e => { e.preventDefault(); col.classList.add('drop'); };
+    col.ondragleave = () => col.classList.remove('drop');
+    col.ondrop = async e => {
+      e.preventDefault(); col.classList.remove('drop');
+      try { await api('PATCH', `/api/tickets/${e.dataTransfer.getData('text/plain')}`, { column: col.dataset.col }); await load(); }
+      catch (err) { toast(err.message); }
+    };
+  });
+}
+
+async function openTicket(id) {
+  open = id; editingPlan = false; tab = 'grill';
+  $('#overlay').classList.add('open');
+  document.body.classList.add('noscroll');
+  $('#drawer').scrollTop = 0;
+  await loadTicket(id);
+}
+
+async function loadTicket(id, quiet) {
+  openData = await api('GET', `/api/tickets/${id}`);
+  const t = openData.ticket;
+  $('#dId').textContent = t.id;
+  if (document.activeElement !== $('#dTitle')) $('#dTitle').value = t.title;
+  options($('#dType'), [...new Set([...S.config.branch.types, t.type])], t.type);
+  options($('#dColumn'), S.config.columns, t.column);
+  $('#dPriority').value = t.priority;
+  $('#dPlanStatus').value = t.planStatus;
+  if (document.activeElement !== $('#dLabels')) $('#dLabels').value = (t.labels || []).join(', ');
+  $('#dBranch').innerHTML = t.branch ? `<code>${esc(t.branch)}</code> ${t.worktree ? `<br>${esc(t.worktree)}` : ''}`
+    : t.plannedBranch ? `Planned: <code>${esc(t.plannedBranch)}</code> (created when you start work)` : 'Not started';
+  if (t.bootstrap) $('#dBranch').innerHTML += `<br>Setup: <a href="#" id="dSetupLink">${esc(t.bootstrap.status)}</a>`;
+  if ($('#dSetupLink')) $('#dSetupLink').onclick = e => { e.preventDefault(); tab = 'setup'; renderSide(); };
+  $('#dStart').textContent = t.branch ? 'Change branch' : 'Start work';
+  $('#dResume').style.display = t.branch ? '' : 'none';
+  $('#dShare').textContent = t.shared ? 'Unshare plan' : 'Share plan';
+  $('#dShare').title = t.shared ? `Synced to ${t.sharedPath}` : 'Copy the plan to docs/plans/ (tracked by git) and keep it synced';
+  $('#planSrc').textContent = t.planSource ? `from ${t.planSource}` : '';
+  // Approve appears once the tasks exist (tasks-ready); before that the header points at the tasks step.
+  const approved = t.planStatus === 'approved', hasPlan = !!openData.plan.trim();
+  const hasTasks = openData.tasks.tasks.length > 0, stale = !!openData.tasks.stale;
+  $('#planApproved').style.display = approved ? '' : 'none';
+  $('#planApprove').style.display = !approved && hasPlan && hasTasks && !stale ? '' : 'none';
+  $('#planNeedsTasks').style.display = !approved && hasPlan && (!hasTasks || stale) ? '' : 'none';
+  $('#planNeedsTasks').textContent = stale ? 'Plan changed: redo tasks' : 'Tasks not made yet';
+  $('#planApprove').title = t.planStatus === 'tasks-ready' ? 'Approve the plan and its tasks, ready to build' : `Plan is "${t.planStatus}". You can still approve it.`;
+  if (!editingPlan) renderPlan();
+  renderSide();
+}
+
+function renderPlan() {
+  const p = openData.plan.trim();
+  $('#planEdit').textContent = 'Edit';
+  $('#planView').className = 'pb md';
+  $('#planView').innerHTML = p ? md(p) : `<div class="empty">No plan yet.<br><br>In Claude, run <code>/ticketboard:ticket plan ${esc(open)}</code><br>to plan it with grill-me or import an existing plan.<br>It fills in here live as you answer.</div>`;
+}
+
+// Test-first states: not run -> red (fails before the code, as it should) -> passing after the code.
+function testBadge(x) {
+  const r = x.testRuns || {};
+  const chip = (c, t, title = '') => `<span class="chip" style="color:${c}" title="${esc(title)}">${t}</span>`;
+  if (!x.test?.command) return x.test?.manual ? chip('var(--muted)', 'manual') : '';
+  if (r.after) return r.after.passed ? chip('var(--ok)', '✓ passing') : chip('var(--danger)', '✗ failing', `exit ${r.after.code}`);
+  if (r.before) return r.before.passed ? chip('var(--danger)', 'passes before code', 'The test passed before any code: it does not test the new behaviour') : chip('var(--warn)', 'written · failing as expected');
+  return chip('var(--muted)', 'not run');
+}
+
+function renderSide() {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  const t = openData.ticket, side = $('#side');
+  side.className = 'pb';
+  if (tab === 'grill') {
+    const g = openData.grill.replace(/^# .*\n/, '').trim();
+    side.classList.add('md');
+    side.innerHTML = g ? md(g) : '<div class="empty">No grill-me questions yet.</div>';
+  } else if (tab === 'tasks') {
+    const tk = openData.tasks, n = openData.next;
+    if (!tk.tasks.length) {
+      side.innerHTML = `<div class="empty">No tasks yet.<br><br>After planning, run <code>/ticketboard:ticket tasks ${esc(open)}</code> in Claude.<br>It splits the plan into tasks and works out how each one is built.</div>`;
+      return;
+    }
+    const badge = { todo: '', doing: '<span class="chip" style="color:var(--warn)">in progress</span>', done: '', skipped: '<span class="chip" style="color:var(--muted)">skipped</span>' };
+    const nextIds = new Set(n.batch.map(x => x.id));
+    side.innerHTML = `
+      ${tk.stale ? '<p style="color:var(--warn)">⚠ The plan changed after these tasks were made. Redo them with <code>/ticketboard:ticket tasks ' + esc(open) + '</code>.</p>' : ''}
+      <div class="prog" style="font-size:13px"><div class="bar"><i style="width:${Math.round(100 * n.done / n.total)}%"></i></div><span>${n.done}/${n.total} done</span></div>
+      <label>Build mode</label>
+      <select id="tMode"><option value="sequential">One task at a time</option><option value="parallel">Independent tasks in parallel (subagents)</option></select>
+      <label>Run</label>
+      <select id="tRun"><option value="step">Task by task (pause after each)</option><option value="all">All in one go (stops only on a problem)</option></select>
+      <label>Commits</label>
+      <select id="tCommit"><option value="per-task">One commit per task</option><option value="single">One commit for the whole ticket, at the end</option></select>
+      ${tk.commitMode === 'single' && n.uncommitted.length ? `<div class="sub" style="color:var(--warn)">${n.uncommitted.length} finished task(s) not committed yet: their changes are only in the worktree.</div>` : ''}
+      <label>Tasks</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <button id="tRunAll">Run all tests</button>
+        <span class="hint">${tk.finalRun ? `Last run together: <b style="color:${tk.finalRun.ok ? 'var(--ok)' : 'var(--danger)'}">${tk.finalRun.ok ? 'all passed' : 'failed'}</b> ${when(tk.finalRun.ts)}${tk.finalRun.ok ? '' : ` (${esc(tk.finalRun.results.filter(r => r.passed === false).map(r => r.taskId).concat(tk.finalRun.project && !tk.finalRun.project.passed ? ['project tests'] : []).join(', '))})`}` : 'Every task\'s test plus the project\'s tests, together.'}</span>
+      </div>
+      ${tk.tasks.map(x => `<div class="task ${x.status === 'done' || x.status === 'skipped' ? 'done' : ''}">
+        <div class="row1"><input type="checkbox" data-t="${esc(x.id)}" ${x.status === 'done' ? 'checked' : ''} title="Mark done">
+          <div style="flex:1"><b>${esc(x.id)}</b> ${esc(x.title)} ${badge[x.status] || ''} ${nextIds.has(x.id) ? '<span class="chip" style="color:var(--accent)">next</span>' : ''} ${x.claudesCall ? '<span class="chip" style="color:var(--muted)">Claude\'s call</span>' : ''}
+            <div class="meta">${x.dependsOn.length ? `after ${esc(x.dependsOn.join(', '))} · ` : ''}${x.files.length ? esc(x.files.join(', ')) : 'files not listed'}${x.commit ? ` · commit ${esc(x.commit.slice(0, 7))}` : ''}</div>
+            <div class="meta">Test: ${testBadge(x)} ${x.test?.command ? `<code>${esc(x.test.command)}</code> <button class="ghost" data-run="${esc(x.id)}" style="padding:1px 6px;font-size:11px">Run test</button>` : x.test?.manual ? `manual: ${esc(x.test.manual)}` : '<span style="color:var(--warn)">none defined</span>'}
+              ${x.test?.description ? `<div>${esc(x.test.description)}</div>` : ''}</div></div>
+          <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:11px" title="May run alongside other parallel tasks"><input type="checkbox" data-p="${esc(x.id)}" ${x.parallel ? 'checked' : ''}> parallel</label></div>
+        ${x.spec ? `<details><summary>How</summary><div class="md">${md(x.spec)}</div></details>` : ''}
+      </div>`).join('')}
+      ${tk.doneWhen.length ? `<label>Done when</label>${tk.doneWhen.map((d, i) => `<label style="display:flex;gap:6px;color:var(--text);margin:4px 0"><input type="checkbox" data-d="${i}" ${d.checked ? 'checked' : ''}> ${esc(d.text)}</label>`).join('')}` : ''}`;
+    $('#tMode').value = tk.buildMode;
+    $('#tRun').value = tk.runMode;
+    $('#tRun').onchange = async e => { await api('PUT', `/api/tickets/${open}/run-mode`, { mode: e.target.value }); toast('Run mode saved'); load(); };
+    $('#tCommit').value = tk.commitMode;
+    $('#tCommit').onchange = async e => { await api('PUT', `/api/tickets/${open}/commit-mode`, { mode: e.target.value }); toast('Commit mode saved'); load(); };
+    $('#tMode').onchange = async e => { await api('PUT', `/api/tickets/${open}/build-mode`, { mode: e.target.value }); toast('Build mode saved'); load(); };
+    side.querySelectorAll('input[data-t]').forEach(c => c.onchange = async () => {
+      const body = { status: c.checked ? 'done' : 'todo' };
+      try { await api('PATCH', `/api/tickets/${open}/tasks/${c.dataset.t}`, body); }
+      catch (e) {
+        if (c.checked && confirm(`${e.message}\n\nMark it done anyway?`)) await api('PATCH', `/api/tickets/${open}/tasks/${c.dataset.t}`, { ...body, force: true });
+        else c.checked = false;
+      }
+      load();
+    });
+    side.querySelectorAll('button[data-run]').forEach(btn => btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Running…';
+      try { const r = await api('POST', `/api/tickets/${open}/tasks/${btn.dataset.run}/test`, { phase: 'after' }); toast(`${btn.dataset.run}: test ${r.passed ? 'passed' : 'failed'}`); }
+      catch (e) { toast(e.message); }
+      load();
+    });
+    $('#tRunAll').onclick = async () => {
+      $('#tRunAll').disabled = true; $('#tRunAll').textContent = 'Running all tests…';
+      try { const r = await api('POST', `/api/tickets/${open}/test-all`); toast(r.ok ? 'All tests passed together' : 'Some tests failed'); }
+      catch (e) { toast(e.message); }
+      load();
+    };
+    side.querySelectorAll('input[data-p]').forEach(c => c.onchange = async () => { await api('PATCH', `/api/tickets/${open}/tasks/${c.dataset.p}`, { parallel: c.checked }); load(); });
+    side.querySelectorAll('input[data-d]').forEach(c => c.onchange = async () => { await api('PUT', `/api/tickets/${open}/done-when/${c.dataset.d}`, { checked: c.checked }); load(); });
+  } else if (tab === 'details') {
+    side.innerHTML = `<label>Description</label><textarea id="dDesc" rows="10">${esc(t.description)}</textarea>
+      <div class="actions"><button id="dDescSave">Save description</button></div>
+      <label>Add a session note (kept as context for later)</label><textarea id="dNote" rows="3" placeholder="e.g. Paused after API layer; UI still to do"></textarea>
+      <div class="actions"><button id="dNoteSave">Add note</button></div>
+      <label>Session notes</label>${(t.sessions || []).slice().reverse().map(s => `<div class="hint">${when(s.ts)}: ${esc(s.note)}</div>`).join('') || '<div class="hint">None yet</div>'}`;
+    $('#dDescSave').onclick = () => patch({ description: $('#dDesc').value }).then(() => toast('Saved'));
+    $('#dNoteSave').onclick = async () => { await api('POST', `/api/tickets/${open}/note`, { text: $('#dNote').value }); toast('Note saved'); load(); };
+  } else if (tab === 'history') {
+    side.innerHTML = `<ul class="hist">${openData.history.slice().reverse().map(h => {
+      const extra = h.changes ? Object.entries(h.changes).map(([k, v]) => `${k}: ${esc(JSON.stringify(v.from))} → ${esc(JSON.stringify(v.to))}`).join(', ')
+        : h.branch ? esc(h.branch) : h.q ? `Q${h.q}` : h.note ? esc(h.note) : h.path ? esc(h.path) : '';
+      return `<li><span class="when">${when(h.ts)}</span> <b>${esc(h.actor)}</b> ${esc(h.action)} <span class="hint">${extra}</span></li>`;
+    }).join('')}</ul>`;
+  } else if (tab === 'versions') {
+    side.innerHTML = openData.versions.length ? openData.versions.map(v => `<div class="ver"><span>${esc(v.replace(/^plan-|\.md$/g, ''))}</span><span><button data-v="${esc(v)}" data-act="view">View</button> <button data-v="${esc(v)}" data-act="restore">Restore</button></span></div>`).join('')
+      : '<div class="empty">Every plan save keeps the previous version here.</div>';
+    side.querySelectorAll('button[data-v]').forEach(b => b.onclick = async () => {
+      const { content } = await api('GET', `/api/tickets/${open}/versions/${b.dataset.v}`);
+      if (b.dataset.act === 'view') { editingPlan = false; $('#planView').innerHTML = `<div class="hint">Viewing ${esc(b.dataset.v)}. <a href="#" id="backPlan">Back to current</a></div>` + md(content); $('#backPlan').onclick = e => { e.preventDefault(); renderPlan(); }; }
+      else if (confirm('Restore this version? The current plan is kept as a version too.')) { await api('PUT', `/api/tickets/${open}/plan`, { content }); toast('Restored'); load(); }
+    });
+  } else if (tab === 'setup') {
+    api('GET', `/api/tickets/${open}/bootstrap`).then(({ log, status }) => {
+      if (tab !== 'setup') return;
+      const st = status ? `<b style="color:${status.status === 'done' ? 'var(--ok)' : status.status === 'failed' ? 'var(--danger)' : 'var(--warn)'}">${esc(status.status)}</b> ${when(status.ts)}${status.command ? ` at <code>${esc(status.command)}</code>` : ''}` : 'Not run yet';
+      const canRun = t.worktree && t.branch && S.project.exists;
+      side.innerHTML = `<p>Worktree setup: ${st} ${canRun && status?.status !== 'running' ? '<button id="reBoot">Run setup again</button>' : ''}</p>
+        <p class="hint">Copies ignored files (like .env), writes .claude/launch.json and runs the setup commands from ticketboard.project.json.</p>
+        ${log ? `<pre style="white-space:pre-wrap;font-size:11px;background:var(--panel2);padding:8px;border-radius:6px;max-height:60vh;overflow:auto">${esc(log.slice(-20000))}</pre>` : ''}`;
+      const rb = $('#reBoot');
+      if (rb) rb.onclick = async () => { await api('POST', `/api/tickets/${open}/bootstrap`); toast('Setup started'); setTimeout(renderSide, 800); };
+    });
+  } else if (tab === 'context') {
+    side.innerHTML = '<div class="hint">Loading…</div>';
+    api('GET', `/api/tickets/${open}/context`).then(({ context }) => {
+      side.innerHTML = `<p class="hint">This is what <code>/ticketboard:resume ${esc(open)}</code> loads into your Claude chat.</p><pre style="white-space:pre-wrap;font-size:12px">${esc(context)}</pre>`;
+    });
+  }
+}
+
+async function patch(body) {
+  try { await api('PATCH', `/api/tickets/${open}`, body); await load(); } catch (e) { toast(e.message); }
+}
+
+// drawer wiring
+$('#dClose').onclick = () => { $('#overlay').classList.remove('open'); document.body.classList.remove('noscroll'); open = null; };
+$('#overlay').onclick = e => { if (e.target.id === 'overlay') $('#dClose').onclick(); };
+$('#dTitle').onchange = () => patch({ title: $('#dTitle').value });
+$('#dType').onchange = () => patch({ type: $('#dType').value });
+$('#dColumn').onchange = () => patch({ column: $('#dColumn').value });
+$('#dPriority').onchange = () => patch({ priority: $('#dPriority').value });
+$('#dLabels').onchange = () => patch({ labels: $('#dLabels').value.split(',').map(s => s.trim()).filter(Boolean) });
+$('#tabs').onclick = e => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; renderSide(); } };
+$('#planEdit').onclick = async () => {
+  if (!editingPlan) {
+    editingPlan = true;
+    $('#planEdit').textContent = 'Save';
+    $('#planView').className = 'pb';
+    $('#planView').innerHTML = `<textarea id="planText">${esc(openData.plan)}</textarea>`;
+    $('#planText').focus();
+  } else {
+    await api('PUT', `/api/tickets/${open}/plan`, { content: $('#planText').value });
+    editingPlan = false; toast('Plan saved (previous kept in Versions)'); load();
+  }
+};
+$('#planApprove').onclick = async () => {
+  const st = openData.ticket.planStatus;
+  if (st !== 'tasks-ready' && !confirm(`This plan is "${st}". Approve the plan and its tasks anyway?`)) return;
+  await patch({ planStatus: 'approved' });
+  toast('Plan and tasks approved: ready to build');
+};
+$('#planNeedsTasks').onclick = async () => {
+  const cmd = `/ticketboard:ticket tasks ${open}`;
+  try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+};
+$('#dPlanStatus').onchange = async () => {
+  const v = $('#dPlanStatus').value;
+  if (v === 'approved' && !openData.tasks.tasks.length && !confirm('No tasks yet. Approve anyway? Build will make the tasks when it starts.')) {
+    $('#dPlanStatus').value = openData.ticket.planStatus; return;
+  }
+  patch({ planStatus: v });
+};
+$('#dShare').onclick = async () => {
+  const t = await api('POST', `/api/tickets/${open}/share`, { on: !openData.ticket.shared });
+  toast(t.shared ? `Shared at ${t.sharedPath}. Commit it to share.` : 'Plan no longer synced'); load();
+};
+$('#dResume').onclick = async () => {
+  const cmd = `/ticketboard:resume ${open}`;
+  try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+};
+let delCheck = null;
+$('#dDelete').onclick = async () => {
+  delCheck = null;
+  $('#xId').textContent = open; $('#xErr').textContent = ''; $('#xConfirm').value = ''; $('#xBranch').checked = false;
+  $('#xBody').innerHTML = 'Checking worktree and remote…'; $('#xForceRow').style.display = 'none'; $('#xGo').disabled = true;
+  $('#mDelete').classList.add('open');
+  try { delCheck = await api('GET', `/api/tickets/${open}/delete-check`); } catch (e) { return $('#xErr').textContent = e.message; }
+  const c = delCheck;
+  const wt = !c.worktree ? 'No worktree.' : c.isMain ? 'Linked to the main checkout: it is kept.' : c.worktreeExists ? `Worktree folder will be removed:<br><code>${esc(c.worktree)}</code>` : 'Worktree folder is already gone.';
+  const pushed = c.pushedTo.length ? `<div style="color:var(--ok)">✓ Branch is pushed to ${esc(c.pushedTo.join(', '))}</div>`
+    : c.branch && !c.isMain && !c.unpushed.length ? '<div style="color:var(--ok)">✓ No unpushed commits on this branch</div>' : '';
+  const list = (title, rows) => rows.length ? `<div style="margin-top:8px"><b>${title}</b><pre style="font-size:11px;max-height:140px;overflow:auto;background:var(--panel2);padding:6px;border-radius:6px">${esc(rows.slice(0, 20).join('\n'))}${rows.length > 20 ? `\n… ${rows.length - 20} more` : ''}</pre></div>` : '';
+  $('#xBody').innerHTML = `<p>${wt}</p>${pushed}
+    ${c.safe ? '<div style="color:var(--ok)">✓ Nothing would be lost: no uncommitted files or unpushed commits.</div>'
+      : `<div style="color:var(--danger)">${c.reasons.map(r => `⚠ ${esc(r)}`).join('<br>')}</div><div class="hint">Commit and push first (from the worktree), or force delete below.</div>`}
+    ${list('Unpushed commits', c.unpushed)}${list('Uncommitted files', c.dirty)}
+    <p class="hint">The ticket's plan, grill-me log and history are deleted too${openData.ticket.shared ? `; the shared plan in ${esc(openData.ticket.sharedPath)} is kept` : ''}.</p>`;
+  $('#xBranchRow').style.display = c.branch && !c.isMain ? 'flex' : 'none';
+  $('#xBranchName').textContent = c.branch || '';
+  $('#xForceRow').style.display = c.safe ? 'none' : '';
+  $('#xConfirmLabel').innerHTML = `Type <code>${esc(open)}</code> (or just ${esc(open.split('-').pop())}) to delete anyway and lose the work above`;
+  $('#xConfirm').placeholder = open;
+  $('#xGo').textContent = c.safe ? 'Delete' : 'Force delete';
+  $('#xGo').disabled = false;
+};
+// Accepts "TIX-16", "tix-16" or "16" for ticket TIX-16.
+const confirmMatches = () => {
+  const v = $('#xConfirm').value.trim().toUpperCase();
+  return !!v && (v === open || v === open.split('-').pop());
+};
+$('#xConfirm').oninput = () => { $('#xErr').textContent = ''; };
+$('#xConfirm').onkeydown = e => { if (e.key === 'Enter') $('#xGo').click(); };
+$('#xGo').onclick = async () => {
+  if (!delCheck) return;
+  if (!delCheck.safe && !confirmMatches()) {
+    $('#xErr').textContent = `Type ${open} in the box above to confirm the force delete.`;
+    return $('#xConfirm').focus();
+  }
+  $('#xGo').disabled = true;
+  try {
+    const r = await api('DELETE', `/api/tickets/${open}`, { force: !delCheck.safe, confirm: delCheck.safe ? undefined : open, deleteBranch: $('#xBranch').checked });
+    $('#mDelete').classList.remove('open'); $('#dClose').onclick(); toast(`${r.id} deleted`); load();
+  } catch (e) { $('#xErr').textContent = e.message; $('#xGo').disabled = false; }
+};
+
+// modals
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('.modal').classList.remove('open'));
+// Branch picker shared by the New ticket popup and the Start work dialog.
+// modes: 'later' (save name only), 'new' (create branch now), 'current' (link checked-out branch).
+const MODE_TEXT = {
+  later: ['Save the name, create the branch when work starts', 'Good for planning now and building later. Start work uses this name.'],
+  new: ['Create the branch now', 'Pick a name, optionally in its own git worktree.'],
+  current: ['Use the current branch', 'No new branch or worktree; just link this ticket to it.'],
+  adopt: ['Move my current work into a worktree', '']
+};
+function makePicker(root, { modes, fetchOptions, needsInput }) {
+  const p = root.id;
+  root.innerHTML = `${modes.map((m, i) => `<label class="opt" ${m === 'adopt' ? 'data-r="adoptRow" style="display:none"' : ''}><input type="radio" name="${p}mode" value="${m}" ${i === 0 ? 'checked' : ''}><div>
+      <div>${MODE_TEXT[m][0]}${m === 'current' ? ` <code data-r="current"></code>` : ''}${i === 0 ? ' <span class="chip" style="color:var(--ok)">Recommended</span>' : ''}</div>
+      <div class="sub" ${m === 'adopt' ? 'data-r="adoptSub"' : ''}>${MODE_TEXT[m][1]}</div></div></label>`).join('')}
+    <div data-r="names">
+      <label>Branch name</label>
+      <div data-r="opts" class="hint">Enter a title to see suggested names.</div>
+      <label class="opt"><input type="radio" name="${p}name" value="__custom"><div style="flex:1">
+        <div>Custom</div>
+        <input data-r="custom" class="w100" placeholder="{type}/{ID}-{slug}  or  a literal name">
+        <div class="sub" data-r="preview">Tokens: {type} {id} {ID} {slug} {user} {date}</div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;color:var(--text)"><input type="checkbox" data-r="save"> Save this pattern as my default</label>
+      </div></label>
+    </div>
+    <div data-r="newonly">
+      <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" data-r="worktree" checked> Create a git worktree (recommended)</label>
+      <label>Create from (base branch)</label><select data-r="base" class="w100"><option value="">Loading branches…</option></select>
+      <div class="sub" data-r="baseHint"></div>
+    </div>`;
+  const r = k => root.querySelector(`[data-r=${k}]`);
+  const mode = () => root.querySelector(`input[name=${p}mode]:checked`).value;
+  const pickName = () => root.querySelector(`input[name=${p}name]:checked`)?.value;
+  let last = null, seq = 0, timer, work = null;
+  const layout = () => {
+    const m = mode();
+    // Adopting a feature branch moves that branch, so there's no name to pick; on the base branch it needs a new one.
+    r('names').style.display = m === 'current' || (m === 'adopt' && work && !work.isBase) ? 'none' : '';
+    r('newonly').style.display = m === 'new' ? '' : 'none';
+  };
+  // "Move my current work" only shows when the main checkout has work that no other ticket owns.
+  async function loadWork() {
+    const row = r('adoptRow');
+    if (!row) return;
+    try { work = await api('GET', '/api/current-work'); } catch { work = null; }
+    const show = !!work && work.hasWork && !work.owner;
+    row.style.display = show ? '' : 'none';
+    if (!show) { if (mode() === 'adopt') root.querySelector(`input[name=${p}mode]`).checked = true; layout(); return; }
+    const files = work.dirtyFiles.length, commits = work.commits.length;
+    r('adoptSub').textContent = work.isBase
+      ? `You have ${files} uncommitted file(s) on ${work.base}. They move to a new branch in its own worktree; ${work.base} is left clean.`
+      : `Moves ${work.branch} (${commits} commit(s), ${files} uncommitted file(s)) into its own worktree and switches the main folder back to ${work.base}.`;
+    layout();
+  }
+  async function refresh() {
+    layout();
+    const custom = r('custom').value.trim();
+    if (needsInput && !needsInput()) { r('opts').innerHTML = 'Enter a title to see suggested names.'; return; }
+    const mine = ++seq;
+    const o = await fetchOptions(custom);
+    if (mine !== seq) return; // a newer request is in flight
+    last = o;
+    const picked = pickName();
+    r('current').textContent = o.current || '(detached)';
+    const firstOk = o.options.findIndex(x => x.valid);
+    r('opts').innerHTML = o.options.map((x, i) => {
+      const tag = x.planned ? 'planned' : i === firstOk ? 'recommended' : x.isDefault ? 'default' : '';
+      return `<label class="opt"><input type="radio" name="${p}name" value="${esc(x.name)}" ${(picked && picked !== '__custom' ? picked === x.name : i === firstOk) ? 'checked' : ''} ${x.valid ? '' : 'disabled'}>
+        <div><div class="name">${esc(x.name)}${tag ? ` <span class="chip" style="color:${tag === 'recommended' || tag === 'planned' ? 'var(--ok)' : 'var(--muted)'}">${tag}</span>` : ''}</div>
+        <div class="sub">${x.planned ? 'saved on this ticket' : esc(x.pattern)}${x.exists ? ' · branch already exists (will be reused)' : ''}${x.valid ? '' : ' · invalid'}</div></div></label>`;
+    }).join('');
+    r('preview').textContent = custom ? `→ ${o.preview}${o.previewValid ? '' : '  (invalid branch name)'}${o.previewExists ? '  (exists, will be reused)' : ''}` : 'Tokens: {type} {id} {ID} {slug} {user} {date}';
+    r('save').disabled = !custom.includes('{');
+    if (picked === '__custom') root.querySelector(`input[name=${p}name][value=__custom]`).checked = true;
+  }
+  const soon = () => { clearTimeout(timer); timer = setTimeout(refresh, 250); };
+  // Base branch dropdown: default base first, then local, then remote branches (newest commits first).
+  async function loadBases() {
+    const sel = r('base');
+    let g;
+    try { g = await api('GET', '/api/git-branches'); } catch (e) { sel.innerHTML = `<option value="">${esc(e.message)}</option>`; return; }
+    const opt = (v, label) => `<option value="${esc(v)}" ${v === g.default ? 'selected' : ''}>${esc(label || v)}</option>`;
+    const tag = b => b === g.default ? `${b}  (default)` : b === g.current ? `${b}  (checked out)` : b;
+    sel.innerHTML = `<optgroup label="Local">${g.local.map(b => opt(b, tag(b))).join('')}</optgroup>`
+      + (g.remote.length ? `<optgroup label="Remote">${g.remote.map(b => opt(b, tag(b))).join('')}</optgroup>` : '')
+      + (g.local.includes(g.default) || g.remote.includes(g.default) ? '' : opt(g.default, `${g.default}  (default)`));
+    const hint = () => { r('baseHint').textContent = sel.value.includes('/') && g.remote.includes(sel.value) ? 'Remote branch: uses its last fetched state. Run git fetch first for the latest.' : ''; };
+    sel.onchange = hint; hint();
+  }
+  root.querySelectorAll(`input[name=${p}mode]`).forEach(x => x.onchange = layout);
+  r('custom').oninput = () => { root.querySelector(`input[name=${p}name][value=__custom]`).checked = true; soon(); };
+  return {
+    refresh, soon,
+    reset() {
+      root.querySelector(`input[name=${p}mode]`).checked = true;
+      root.querySelectorAll(`input[name=${p}name]`).forEach(x => x.checked = false);
+      r('custom').value = ''; r('save').checked = false; r('worktree').checked = true;
+      last = null; work = null; layout(); loadBases(); loadWork();
+    },
+    // -> { branchMode, branch, worktree, base, savePattern }; throws a message when incomplete
+    value() {
+      const m = mode();
+      if (m === 'current') return { branchMode: 'current' };
+      if (m === 'adopt' && work && !work.isBase) return { branchMode: 'adopt' };
+      const pick = pickName(), custom = r('custom').value.trim();
+      let branch = pick;
+      if (pick === '__custom') {
+        if (!custom || !last?.preview) throw 'Enter a custom name or pattern';
+        if (!last.previewValid) throw `Invalid branch name: ${last.preview}`;
+        branch = last.preview;
+      }
+      if (!branch) throw 'Pick a branch name';
+      return { branchMode: m, branch, worktree: r('worktree').checked, base: r('base').value.trim() || undefined,
+        savePattern: pick === '__custom' && r('save').checked && custom.includes('{') ? custom : undefined };
+    }
+  };
+}
+
+function adoptToast(t) {
+  if (!t.adopt) return '';
+  const a = t.adopt;
+  return a.changes === 'moved' || a.changes === 'none'
+    ? `Moved your work to ${t.branch} (${a.commits} commit(s), ${a.files} file(s)). Main folder is on ${a.mainNowOn}.`
+    : `Worktree ready on ${t.branch}, but changes were ${a.changes}`;
+}
+
+const newPicker = makePicker($('#nPicker'), {
+  modes: ['later', 'new', 'current', 'adopt'],
+  needsInput: () => $('#nTitle').value.trim(),
+  fetchOptions: custom => api('GET', `/api/branch-preview?title=${encodeURIComponent($('#nTitle').value.trim())}&type=${encodeURIComponent($('#nType').value)}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+});
+$('#nTitle').oninput = () => newPicker.soon();
+$('#nType').onchange = () => newPicker.refresh();
+$('#btnNew').onclick = () => {
+  options($('#nType'), S.config.branch.types, S.config.branch.defaultType);
+  $('#nTitle').value = ''; $('#nDesc').value = ''; $('#nErr').textContent = '';
+  newPicker.reset(); newPicker.refresh();
+  $('#mNew').classList.add('open'); $('#nTitle').focus();
+};
+$('#nCreate').onclick = async () => {
+  if (!$('#nTitle').value.trim()) return $('#nErr').textContent = 'Title is required';
+  let branch;
+  try { branch = newPicker.value(); } catch (msg) { return $('#nErr').textContent = msg; }
+  $('#nCreate').disabled = true;
+  try {
+    const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, ...branch });
+    $('#mNew').classList.remove('open'); await load(); openTicket(t.id);
+    toast(t.warning || adoptToast(t) || (t.branch ? `${t.id} on ${t.branch}` : `${t.id} created${t.plannedBranch ? `, branch ${t.plannedBranch} saved for later` : ''}`));
+  } catch (e) { $('#nErr').textContent = e.message; }
+  $('#nCreate').disabled = false;
+};
+
+const startPicker = makePicker($('#sPicker'), {
+  modes: ['new', 'current', 'adopt'],
+  fetchOptions: custom => api('GET', `/api/tickets/${open}/branches?type=${encodeURIComponent($('#sType').value)}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+});
+$('#sType').onchange = () => startPicker.refresh();
+$('#dStart').onclick = async () => {
+  const t = openData.ticket;
+  options($('#sType'), [...new Set([...S.config.branch.types, t.type])], t.type);
+  $('#sErr').textContent = '';
+  $('#sHint').textContent = t.planStatus === 'approved' || t.planStatus === 'validated' ? `Plan is ${t.planStatus}.` : `Heads up: plan is "${t.planStatus}". You can still start.`;
+  startPicker.reset();
+  $('#mStart').classList.add('open');
+  await startPicker.refresh();
+};
+$('#sGo').onclick = async () => {
+  let v;
+  try { v = startPicker.value(); } catch (msg) { return $('#sErr').textContent = msg; }
+  const body = v.branchMode === 'current' ? { useCurrent: true } : v;
+  $('#sGo').disabled = true;
+  try {
+    if (v.branchMode !== 'current' && $('#sType').value !== openData.ticket.type) await api('PATCH', `/api/tickets/${open}`, { type: $('#sType').value });
+    const t = v.branchMode === 'adopt'
+      ? await api('POST', `/api/tickets/${open}/adopt`, { branch: v.branch })
+      : await api('POST', `/api/tickets/${open}/start`, body);
+    $('#mStart').classList.remove('open'); toast(adoptToast(t) || `On ${t.branch}`); load();
+  } catch (e) { $('#sErr').textContent = e.message; }
+  $('#sGo').disabled = false;
+};
+
+function renderSettings() {
+  const b = S.config.branch;
+  $('#cPatterns').innerHTML = b.patterns.map(p => `<label class="opt"><input type="radio" name="cpat" value="${esc(p)}" ${p === b.pattern ? 'checked' : ''}><div class="name">${esc(p)}</div></label>`).join('');
+  $('#cTypes').innerHTML = b.types.map(typeChip).join(' ');
+  document.querySelectorAll('input[name=cpat]').forEach(r => r.onchange = async () => { S.config = await api('PUT', '/api/config', { branch: { pattern: r.value } }); toast('Default pattern saved'); });
+}
+$('#btnSettings').onclick = () => { renderSettings(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
+$('#cAddPattern').onclick = async () => {
+  const p = $('#cNewPattern').value.trim();
+  if (!p.includes('{')) return $('#cErr').textContent = 'A pattern needs at least one {token}';
+  S.config = await api('PUT', '/api/config', { savePattern: p }); $('#cNewPattern').value = ''; renderSettings();
+};
+$('#cAddType').onclick = async () => {
+  const t = $('#cNewType').value.trim().toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(t)) return $('#cErr').textContent = 'Letters, digits and dashes only';
+  S.config = await api('PUT', '/api/config', { addType: t }); $('#cNewType').value = ''; renderSettings();
+};
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { const m = document.querySelector('.modal.open'); if (m) m.classList.remove('open'); else if (open && !editingPlan) $('#dClose').onclick(); } });
+
+// live updates: Claude writes plan/grill files while you watch
+setInterval(async () => {
+  try {
+    const { rev } = await api('GET', '/api/rev');
+    $('#live').classList.remove('off');
+    if (rev !== S.rev) await load();
+  } catch { $('#live').classList.add('off'); }
+}, 1500);
+load();
+</script>
+</body>
+</html>

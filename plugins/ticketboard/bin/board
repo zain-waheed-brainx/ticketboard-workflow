@@ -1,0 +1,423 @@
+#!/usr/bin/env node
+// Ticketboard CLI. Run from the main checkout or any of its worktrees.
+const fs = require('fs');
+const path = require('path');
+const { Board } = require('../lib/store');
+const project = require('../lib/project');
+
+const HELP = `board <command>
+
+  init                                  create .board/ (gitignored) in the main checkout
+  doctor [--json]                       check the tools this project needs
+  detect [--json] [--root DIR]          propose a project profile from the repo's files (writes nothing)
+  project [show|write [--file F]|trust] ticketboard.project.json: show, write (and trust), or trust as-is
+  bootstrap <id>                        (re)run worktree setup: copy files, launch.json, setup commands
+  new "<title>" [--type T] [--desc D] [--priority P] [--branch B] [--start | --current] [--no-worktree]
+                                        --branch saves a planned name; --start creates it (+ worktree) now;
+                                        --adopt moves the main checkout's current work into its worktree
+  suggest "<title>" [--type T] [--pattern P]   branch name suggestions before the ticket exists
+  list [--json]                         all tickets
+  show <id>                             full resume context (plan, decisions, git, history)
+  work [--json]                         what's in progress in the main checkout (branch, commits, changes)
+  adopt <id> [--branch B] [--no-setup]  move that work into the ticket's worktree; main checkout goes back to base
+  resumable [--json]                  started tickets that aren't done (for /ticketboard:resume's picker)
+  resume [id] [--fix switch|recreate] [--print]   terminal alternative to /ticketboard:resume: starts Claude there
+  prepare <id> [--fix switch|recreate] [--json]   where to work: existing worktree, or main checkout (switch only if clean)
+  which                                 ticket for the current branch
+  set <id> key=value ...                title, type, priority, labels=a,b, column, description
+  move <id> <column>
+  plan <id> [--file F] [--source grill|imported] [--note N]   write plan (stdin if no --file)
+  plan-status <id> <none|drafting|needs-validation|validated|tasks-ready|approved>
+  tasks <id> [--json]                   the task checklist (the "how"), progress, done-when list
+  tasks-write <id> [--file F]           write tasks from JSON (stdin if no --file); plan becomes tasks-ready
+  task <id> <T#> status=todo|doing|done|skipped [commit=SHA] [note=..] [parallel=true|false] [force=true]
+                                        (done needs the task's test to have passed after the code, unless force=true)
+  test <id> <T#> [--before] [--json]    run a task's test; --before = right after writing it (must FAIL), else after the code (must PASS)
+  test-all <id> [--json]                every task's test together, then the project's test command
+  next <id> [--json]                  what build should do next (one task, or a parallel batch)
+  build-mode <id> sequential|parallel
+  commit-mode <id> per-task|single      one commit per task, or one commit for the whole ticket at the end
+  run-mode <id> step|all                pause after every task, or build all tasks in one go
+  commit-record <id> <sha>             (single mode) record the final commit on all finished tasks
+  done-when <id> <n> [--uncheck]        tick a "Done when" item
+  grill <id> --q "<question>" --a "<answer>"                  append a grill-me Q&A
+  branches <id> [--type T] [--json]     branch name options from saved patterns
+  start <id> [--branch B | --current] [--no-worktree] [--base B] [--no-setup]
+  pattern save "<pattern>" [--no-default]   tokens: {type} {id} {ID} {slug} {user} {date}
+  type add <name>                       add a branch type (e.g. release)
+  share <id> [--off]                    copy plan to docs/plans/ (tracked) and keep it synced
+  note <id> "<text>"                    session note for future context
+  history <id>
+  delete-check <id> [--json]            would deleting lose uncommitted files or unpushed commits?
+  delete <id> [--delete-branch] [--force]   remove ticket + its worktree; refuses unless safe (or --force)
+  config [--json]
+  serve [--port 4317]                   start the web board`;
+
+function parse(argv) {
+  const pos = [], flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const k = a.slice(2);
+      if (k.startsWith('no-')) flags[k.slice(3)] = false;
+      else if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) flags[k] = argv[++i];
+      else flags[k] = true;
+    } else pos.push(a);
+  }
+  return { pos, flags };
+}
+
+function out(x, json) {
+  if (json || typeof x !== 'string') console.log(typeof x === 'string' ? x : JSON.stringify(x, null, 2));
+  else console.log(x);
+}
+
+// Run worktree setup from ticketboard.project.json after a branch/worktree is created.
+async function setupAfterStart(b, t, flags) {
+  if (flags.setup === false) return;
+  const r = await b.bootstrap(t.id, { onOutput: s => process.stdout.write(s) });
+  if (r.skipped) console.log(`worktree setup skipped: ${r.skipped}`);
+  else if (r.failed) { console.log(`\nworktree setup FAILED at "${r.failed}" (exit ${r.code}). Log: ${r.log}\nFix it, then: board bootstrap ${t.id}`); process.exitCode = 1; }
+  else console.log('\nworktree setup done');
+}
+
+function ask(q) {
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => rl.question(q, a => { rl.close(); resolve(a.trim()); }));
+}
+
+function describePrepare(r) {
+  if (r.status === 'mismatch') {
+    return `${r.id} works on ${r.branch} in the main checkout, but the main checkout is now on ${r.current || '(detached)'}`
+      + (r.mainDirty ? ` with ${r.mainDirty} uncommitted change(s), so it can't switch.` : '.');
+  }
+  if (r.status === 'missing') return `${r.id}'s worktree folder is gone: ${r.worktree} (branch ${r.branch} still exists)`;
+  return {
+    existing: `${r.id} on ${r.branch} in its worktree: ${r.worktree}`,
+    'main-checkout': `${r.id} on ${r.branch} in the main checkout: ${r.worktree}`,
+    switched: `Switched the main checkout to ${r.branch}`,
+    created: `Created a worktree for ${r.branch}: ${r.worktree}`
+  }[r.action];
+}
+
+function printDetect(d) {
+  return [`stack: ${d.stack.join(', ') || '(unknown)'}   from: ${d.evidence.join(', ') || '-'}`,
+    `base branch: ${d.baseBranch}`, `tools: ${d.tools.join(', ')}`,
+    ...d.commands.dev.map(x => `dev: ${x.command}${x.port ? ` (port ${x.port})` : ''}  [${x.detectedFrom}]`),
+    `test: ${d.commands.test || '-'}   build: ${d.commands.build || '-'}`,
+    `worktree copy: ${d.worktree.copyFiles.join(', ') || '-'}`,
+    `worktree setup:${d.worktree.setup.length ? d.worktree.setup.map(s => `\n  - ${s}`).join('') : ' -'}`,
+    ...(d.notes ? [`note: ${d.notes}`] : []),
+    ...d.unsure.map(u => `? ${u}`)].join('\n');
+}
+
+function printDoctor(rows) {
+  return rows.map(r => `${r.ok ? '✓' : '✗'} ${r.tool.padEnd(9)} ${r.ok ? r.version || r.path : 'not found'}${r.note ? `  (${r.note})` : ''}`).join('\n');
+}
+
+async function main() {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const { pos, flags } = parse(rest);
+  if (!cmd || cmd === 'help' || cmd === '--help') return console.log(HELP);
+  const cwd = flags.root ? path.resolve(flags.root) : process.cwd();
+  if (cmd === 'detect' || cmd === 'doctor') {
+    // These work without git too, so setup can explain what's missing.
+    let root = cwd, isGit = true;
+    try { root = new Board(cwd).root; } catch { isGit = false; }
+    if (cmd === 'detect') {
+      const d = project.detect(root);
+      if (!isGit) d.unsure.unshift('Not a git repository: worktrees need git (git init, or clone the repo)');
+      if (flags.json) return out({ ...d, isGit }, true);
+      return out(printDetect(d));
+    }
+    const p = project.load(root);
+    const rows = project.doctor(p?.tools || project.detect(root).tools);
+    if (flags.json) return out(rows, true);
+    out(printDoctor(rows) + (isGit ? '' : '\n✗ repo      not a git repository (worktrees need git)'));
+    if (!isGit || rows.some(r => !r.ok)) process.exitCode = 1;
+    return;
+  }
+  const b = new Board(cwd);
+  if (!['init', 'project'].includes(cmd)) b.ensure();
+
+  switch (cmd) {
+    case 'init': {
+      const root = b.init();
+      return out(`Board ready at ${path.join(root, '.board')} (added to .gitignore)`);
+    }
+    case 'new': {
+      const plannedBranch = typeof flags.branch === 'string' ? flags.branch : null;
+      let t = b.create({ title: pos.join(' '), type: flags.type, description: flags.desc || '', priority: flags.priority || 'medium', plannedBranch });
+      let msg = `${t.id} created: ${t.title} [${t.type}]${plannedBranch ? `, planned branch ${plannedBranch}` : ''}`;
+      if (flags.adopt) {
+        out(msg);
+        const r = b.adopt(t.id, { branch: plannedBranch || undefined });
+        out(`moved your current work to ${r.branch} in ${r.worktree} (${r.commits} commit(s), ${r.files} file(s); changes: ${r.changes}); main checkout is on ${r.mainNowOn}`);
+        if (flags.setup !== false) await setupAfterStart(b, r.ticket, flags);
+        return;
+      }
+      if (flags.start || flags.current) {
+        t = b.start(t.id, { useCurrent: !!flags.current, worktree: flags.worktree !== false, base: flags.base });
+        msg += `\nstarted on ${t.branch}\nworktree: ${t.worktree}`;
+      }
+      out(flags.json ? t : msg, flags.json);
+      if (flags.start && !flags.current) await setupAfterStart(b, t, flags);
+      return;
+    }
+    case 'suggest': {
+      const o = b.branchOptionsDraft({ title: pos.join(' '), type: flags.type }, flags.pattern);
+      if (flags.json) return out(o, true);
+      return out([`current: ${o.current || '(detached)'}`,
+        ...o.options.map(x => `${x.isDefault ? '*' : ' '} ${x.name.padEnd(50)} ${x.pattern}${x.valid ? '' : '  INVALID'}${x.exists ? '  EXISTS' : ''}`),
+        ...(o.preview ? [`  custom: ${o.preview}${o.previewValid ? '' : '  INVALID'}`] : [])].join('\n'));
+    }
+    case 'list': {
+      const ts = b.list();
+      if (flags.json) return out(ts, true);
+      if (!ts.length) return out('No tickets.');
+      return out(ts.map(t => `${t.id.padEnd(8)} ${t.column.padEnd(12)} ${t.type.padEnd(12)} plan:${t.planStatus.padEnd(17)} ${t.title}${t.branch ? `  (${t.branch})` : ''}`).join('\n'));
+    }
+    case 'show': return out(b.context(pos[0]));
+    case 'which': {
+      const t = b.which();
+      return out(t ? (flags.json ? t : t.id) : 'No ticket for this branch', flags.json);
+    }
+    case 'set': {
+      const patch = {};
+      for (const kv of pos.slice(1)) {
+        const i = kv.indexOf('=');
+        if (i < 0) throw new Error(`Expected key=value, got ${kv}`);
+        const k = kv.slice(0, i), v = kv.slice(i + 1);
+        patch[k] = k === 'labels' ? v.split(',').map(s => s.trim()).filter(Boolean) : v;
+      }
+      const t = b.update(pos[0], patch);
+      return out(`${t.id} updated`);
+    }
+    case 'move': return out(`${b.update(pos[0], { column: pos[1] }).id} -> ${pos[1]}`);
+    case 'plan': {
+      const content = flags.file ? fs.readFileSync(flags.file, 'utf8') : fs.readFileSync(0, 'utf8');
+      const t = b.writePlan(pos[0], content, { source: flags.source, note: flags.note });
+      return out(`${t.id} plan saved (${content.length} chars)${t.shared ? `, synced to ${t.sharedPath}` : ''}`);
+    }
+    case 'plan-status': {
+      const t = b.update(pos[0], { planStatus: pos[1] });
+      const warn = pos[1] === 'approved' && !b.hasTasks(t.id) ? '\nnote: approved without tasks; build will make them when it starts' : '';
+      return out(`${t.id} plan: ${pos[1]}${warn}`);
+    }
+    case 'grill': {
+      if (!flags.q || !flags.a) throw new Error('grill needs --q and --a');
+      return out(`Q${b.grillAdd(pos[0], flags.q, flags.a)} logged`);
+    }
+    case 'branches': {
+      const o = b.branchOptions(pos[0], flags.type);
+      if (flags.json) return out(o, true);
+      return out([`current: ${o.current || '(detached)'}`, `types: ${o.types.join(', ')}`,
+        ...o.options.map(x => `${x.planned || (x.isDefault && !o.options.some(y => y.planned)) ? '*' : ' '} ${x.name.padEnd(50)} ${x.planned ? '(planned)' : x.pattern}${x.valid ? '' : '  INVALID'}${x.exists ? '  EXISTS' : ''}`)].join('\n'));
+    }
+    case 'start': {
+      const t = b.start(pos[0], { branch: flags.branch, useCurrent: !!flags.current, worktree: flags.worktree !== false, base: flags.base });
+      out(`${t.id} on ${t.branch}\nworktree: ${t.worktree}`);
+      if (!flags.current) await setupAfterStart(b, t, flags);
+      return out(`Resume it in Claude with: /ticketboard:resume ${t.id}`);
+    }
+    case 'tasks': {
+      const tk = b.tasks(pos[0]);
+      if (flags.json) return out(tk, true);
+      return out(b.tasksSummary(pos[0]).trim());
+    }
+    case 'tasks-write': {
+      const data = JSON.parse(flags.file ? fs.readFileSync(flags.file, 'utf8') : fs.readFileSync(0, 'utf8'));
+      const tk = b.writeTasks(pos[0], data);
+      const t = b.get(pos[0]);
+      return out(`${t.id}: ${tk.tasks.length} task(s), ${tk.tasks.filter(x => x.parallel).length} marked parallel, build mode ${tk.buildMode}; plan is ${t.planStatus}`);
+    }
+    case 'task': {
+      // board task TIX-8 T3 status=done commit=abc123 note="..."
+      const patch = {};
+      for (const kv of pos.slice(2)) { const i = kv.indexOf('='); if (i > 0) patch[kv.slice(0, i)] = kv.slice(i + 1); }
+      const x = b.updateTask(pos[0], pos[1], patch);
+      const n = b.nextTasks(pos[0]);
+      return out(`${x.id} ${x.status}. ${n.done}/${n.total} done${n.batch.length ? `; next: ${n.batch.map(y => y.id).join(' + ')}` : n.allDone ? '; all tasks done' : ''}`);
+    }
+    case 'test': {
+      // board test TIX-8 T3 --before   (right after writing the test: expected to FAIL)
+      // board test TIX-8 T3            (after the code: must PASS)
+      const phase = flags.before ? 'before' : 'after';
+      const r = await b.runTaskTest(pos[0], pos[1], phase);
+      if (r.manual) return out(`${pos[1]} has a manual test: ${r.manual}`);
+      if (flags.json) { out(r, true); } else {
+        out(`$ ${r.command}\n${r.output.trim().split('\n').slice(-25).join('\n')}\n`);
+        out(phase === 'before'
+          ? (r.ok ? `${pos[1]}: test FAILS before the code, as it should (exit ${r.code}). Now write the code.` : `${pos[1]}: test already PASSES before the code: it doesn't test the new behaviour. Fix the test.`)
+          : (r.ok ? `${pos[1]}: test PASSES (${r.ms} ms).` : `${pos[1]}: test FAILS (exit ${r.code}).`));
+      }
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    case 'test-all': {
+      const r = await b.runAllTests(pos[0]);
+      if (flags.json) { out(r, true); } else {
+        out(r.results.map(x => x.skipped ? `- ${x.taskId} skipped` : x.manual ? `? ${x.taskId} manual: ${x.manual}` : `${x.passed ? '✓' : '✗'} ${x.taskId} (${x.ms} ms)${x.passed ? '' : `\n${x.output.trim().split('\n').slice(-15).map(l => `    ${l}`).join('\n')}`}`).join('\n'));
+        if (r.project) out(`${r.project.passed ? '✓' : '✗'} project: ${r.project.command} (${r.project.ms} ms)${r.project.passed ? '' : `\n${r.project.output.trim().split('\n').slice(-15).map(l => `    ${l}`).join('\n')}`}`);
+        out(r.ok ? '\nAll tests passed together.' : '\nSome tests FAILED.');
+      }
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    case 'next': {
+      const n = b.nextTasks(pos[0]);
+      if (flags.json) return out(n, true);
+      if (n.allDone) return out(`All ${n.total} tasks done.`);
+      return out(`${n.done}/${n.total} done, mode ${n.mode}${n.stale ? ' (STALE tasks: plan changed)' : ''}\nnext: ${n.batch.map(x => `${x.id} ${x.title}`).join('\n      ') || '(nothing ready: check dependencies)'}`);
+    }
+    case 'build-mode': return out(`${b.resolveId(pos[0])} build mode: ${b.setBuildMode(pos[0], pos[1]).buildMode}`);
+    case 'commit-mode': return out(`${b.resolveId(pos[0])} commit mode: ${b.setCommitMode(pos[0], pos[1]).commitMode}`);
+    case 'run-mode': return out(`${b.resolveId(pos[0])} run mode: ${b.setRunMode(pos[0], pos[1]).runMode}`);
+    case 'commit-record': return out(`${b.resolveId(pos[0])}: commit ${pos[1]} recorded on ${b.recordCommit(pos[0], pos[1]).join(', ') || '(no uncommitted done tasks)'}`);
+    case 'done-when': {
+      const tk = b.checkDoneWhen(pos[0], Number(pos[1]) - 1, flags.uncheck ? false : true);
+      return out(tk.doneWhen.map((d, i) => `${d.checked ? '[x]' : '[ ]'} ${i + 1}. ${d.text}`).join('\n'));
+    }
+    case 'work': {
+      const w = b.currentWork();
+      if (flags.json) return out(w, true);
+      if (!w.hasWork) return out(`Main checkout is on ${w.base} with no changes: nothing to move.`);
+      return out([`Main checkout: ${w.branch || '(detached)'}${w.isBase ? ' (base branch)' : ''}${w.owner ? `, belongs to ${w.owner}` : ''}`,
+        `commits not on ${w.base}: ${w.commits.length}`, ...w.commits.slice(0, 10).map(c => `  ${c}`),
+        `uncommitted/untracked files: ${w.dirtyFiles.length}`, ...w.dirtyFiles.slice(0, 15).map(f => `  ${f}`),
+        w.isBase ? `Adopting makes a new branch from here and moves the changes into its worktree; ${w.base} stays as it is.`
+          : `Adopting moves ${w.branch} and its changes into a worktree and switches the main checkout back to ${w.base}.`].join('\n'));
+    }
+    case 'adopt': {
+      const r = b.adopt(pos[0], { branch: typeof flags.branch === 'string' ? flags.branch : undefined });
+      out([`${r.ticket.id} now on ${r.branch} in its worktree: ${r.worktree}`,
+        `${r.movedBranch ? 'moved branch' : 'new branch from your current commit'}; ${r.commits} commit(s), ${r.files} changed file(s); changes: ${r.changes}`,
+        `main checkout is now on ${r.mainNowOn}`].join('\n'));
+      if (flags.setup !== false) await setupAfterStart(b, r.ticket, {});
+      return out(`Resume it in Claude with: /ticketboard:resume ${r.ticket.id}`);
+    }
+    case 'resumable': {
+      const list = b.resumable().map(t => ({ id: t.id, title: t.title, column: t.column, branch: t.branch, updated: t.updated,
+        lastNote: t.sessions?.length ? t.sessions[t.sessions.length - 1].note : null }));
+      if (flags.json) return out(list, true);
+      return out(list.map(t => `${t.id.padEnd(7)} ${t.column.padEnd(12)} ${t.title}  (${t.branch})${t.lastNote ? `\n        last note: ${t.lastNote}` : ''}`).join('\n') || 'Nothing to resume.');
+    }
+    case 'prepare': {
+      const r = b.prepare(pos[0], { fix: typeof flags.fix === 'string' ? flags.fix : undefined });
+      if (flags.json) {
+        out(r, true);
+        // Recreated worktrees get setup in the background-able bootstrap; the JSON caller runs it.
+        return;
+      }
+      out(describePrepare(r));
+      if (r.needsSetup && flags.setup !== false) await setupAfterStart(b, b.get(r.id), {});
+      return;
+    }
+    case 'resume': {
+      let id = pos[0];
+      if (!id) {
+        const list = b.resumable();
+        if (!list.length) return out('Nothing to resume: no started tickets that are not done.');
+        const lines = list.map((t, i) => {
+          const note = t.sessions?.length ? t.sessions[t.sessions.length - 1].note : '';
+          return `${String(i + 1).padStart(2)}. ${t.id.padEnd(7)} ${t.column.padEnd(12)} ${t.title}\n      ⎇ ${t.branch}${note ? `\n      last note: ${note.slice(0, 90)}` : ''}`;
+        });
+        out(lines.join('\n'));
+        if (!process.stdin.isTTY) return out('\nRun: board resume <id>');
+        const n = Number(await ask(`\nResume which? [1-${list.length}, Enter = 1] `) || 1);
+        if (!list[n - 1]) throw new Error('No such choice');
+        id = list[n - 1].id;
+      }
+      let r = b.prepare(id, { fix: typeof flags.fix === 'string' ? flags.fix : undefined });
+      if (r.status !== 'ok') {
+        out(describePrepare(r));
+        const fix = r.options[0];
+        if (!fix) return out('Commit or stash the main checkout\'s changes, then resume again.');
+        if (!process.stdin.isTTY) return out(`Re-run with --fix ${fix}`);
+        const yes = (await ask(`${fix === 'switch' ? `Switch the main checkout to ${r.branch}` : 'Recreate the worktree'}? [Y/n] `) || 'y').toLowerCase();
+        if (!yes.startsWith('y')) return out('Cancelled.');
+        r = b.prepare(id, { fix });
+      }
+      out(describePrepare(r));
+      if (r.needsSetup) await setupAfterStart(b, b.get(r.id), {});
+      b.log(r.id, 'resumed', { worktree: r.worktree });
+      const prompt = `/ticketboard:resume ${r.id}`;
+      if (flags.print) return out(`cd ${JSON.stringify(r.worktree)} && claude ${JSON.stringify(prompt)}`);
+      out(`\nStarting Claude in ${r.worktree} ...\n`);
+      const { spawn } = require('child_process');
+      await new Promise(resolve => {
+        const child = spawn('claude', [prompt], { cwd: r.worktree, stdio: 'inherit' });
+        child.on('error', e => {
+          console.error(e.code === 'ENOENT' ? `claude not found on PATH. Run this instead:\n  cd ${JSON.stringify(r.worktree)} && claude ${JSON.stringify(prompt)}` : e.message);
+          process.exitCode = 1; resolve();
+        });
+        child.on('exit', code => { process.exitCode = code || 0; resolve(); });
+      });
+      return;
+    }
+    case 'bootstrap': {
+      const t = b.get(pos[0]);
+      return setupAfterStart(b, t, {});
+    }
+    case 'project': {
+      const sub = pos[0] || 'show';
+      if (sub === 'show') {
+        const p = b.profile();
+        if (!p) return out(`No ${project.FILE}. Run /ticketboard:setup (or board detect).`);
+        return out(flags.json ? p : `${JSON.stringify(p, null, 2)}\ntrusted on this machine: ${b.trusted() ? 'yes' : 'NO (board project trust)'}`, flags.json);
+      }
+      if (sub === 'write') {
+        let profile = flags.file ? JSON.parse(fs.readFileSync(flags.file, 'utf8')) : project.toProfile(project.detect(b.root));
+        if (profile.evidence) profile = project.toProfile(profile); // accept raw detect output too
+        const f = b.saveProfile(profile);
+        return out(`Wrote ${path.relative(b.root, f)}${b.initialized ? ' (trusted)' : ''}. Commit it so teammates get the same setup.`);
+      }
+      if (sub === 'trust') { b.trust(); return out('Trusted: worktree setup commands will run on start'); }
+      throw new Error('Usage: board project [show|write [--file F]|trust]');
+    }
+    case 'pattern': {
+      if (pos[0] !== 'save' || !pos[1]) throw new Error('Usage: board pattern save "<pattern>"');
+      const c = b.savePattern(pos[1], flags.default !== false);
+      return out(`Saved pattern ${pos[1]}${c.branch.pattern === pos[1] ? ' (default)' : ''}`);
+    }
+    case 'type': {
+      if (pos[0] !== 'add' || !pos[1]) throw new Error('Usage: board type add <name>');
+      b.addType(pos[1]);
+      return out(`Branch type ${pos[1]} added`);
+    }
+    case 'share': {
+      const t = b.share(pos[0], flags.off === undefined);
+      return out(t.shared ? `${t.id} plan shared at ${t.sharedPath} (commit it to share)` : `${t.id} plan no longer synced`);
+    }
+    case 'note': return out(`${b.addSession(pos[0], pos.slice(1).join(' ')).id} note saved`);
+    case 'history': {
+      const h = b.history(pos[0]);
+      return out(flags.json ? h : h.map(e => `${e.ts.slice(0, 19)} ${e.actor.padEnd(7)} ${e.action} ${JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k]) => !['ts', 'actor', 'action'].includes(k))))}`).join('\n'), flags.json);
+    }
+    case 'delete-check': {
+      const c = b.deleteCheck(pos[0]);
+      if (flags.json) return out(c, true);
+      return out([
+        `${c.id}: ${c.safe ? 'SAFE to delete' : 'NOT SAFE to delete'}`,
+        `worktree: ${c.worktree || '-'}${c.isMain ? ' (main checkout, kept)' : c.worktreeExists ? '' : ' (already gone)'}`,
+        `branch: ${c.branch || '-'}${c.pushedTo.length ? `  pushed: ${c.pushedTo.join(', ')}` : ''}`,
+        ...c.reasons.map(r => `! ${r}`),
+        ...c.unpushed.slice(0, 10).map(l => `  unpushed ${l}`),
+        ...c.dirty.slice(0, 10).map(l => `  dirty    ${l}`)
+      ].join('\n'));
+    }
+    case 'delete': {
+      // Typing --force on the command line is the confirmation.
+      const r = b.delete(pos[0], { force: !!flags.force, confirm: flags.force ? b.get(pos[0]).id : undefined, deleteBranch: !!flags['delete-branch'] });
+      return out(`${r.id} deleted: ${r.done.join(', ')}${r.sharedPath ? `\nShared plan kept at ${r.sharedPath}` : ''}`);
+    }
+    case 'config': return out(b.config(), true);
+    case 'serve': return require('../lib/server').serve(b, Number(flags.port) || 4317);
+    default: throw new Error(`Unknown command ${cmd}\n\n${HELP}`);
+  }
+}
+
+main().catch(e => {
+  console.error(`board: ${e.stderr ? String(e.stderr).trim() : e.message}`);
+  process.exit(1);
+});

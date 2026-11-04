@@ -1,0 +1,6 @@
+{
+  "name": "ticketboard",
+  "version": "0.1.0",
+  "description": "Local ticket board with grill-me planning, plan docs beside each ticket, full history, and branch/worktree per ticket.",
+  "author": { "name": "Zain Waheed" }
+}

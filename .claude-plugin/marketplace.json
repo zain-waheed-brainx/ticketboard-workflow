@@ -1,0 +1,7 @@
+{
+  "name": "ticketboard-local",
+  "owner": { "name": "Zain Waheed" },
+  "plugins": [
+    { "name": "ticketboard", "source": "./plugins/ticketboard", "description": "Ticket board + grill-me planning + worktrees" }
+  ]
+}
