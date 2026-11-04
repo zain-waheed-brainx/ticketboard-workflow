@@ -43,12 +43,14 @@ Repeat until `board next <id> --json` reports `allDone`.
 5. **Review, then commit, following `commitMode`** (from `board next <id> --json`). A commit always comes after a review that passed:
    - **Review first.** If the repo's commit hooks run a review (e.g. a code-review pre-commit hook), that review is the gate: never skip or bypass hooks (`--no-verify` is not allowed). If no hook reviews the code, review the staged diff yourself before committing: run the `code-review` skill if it's available, otherwise read the diff for bugs against the task's spec. Fix what it finds and re-run the task's test (`board test <id> <T#>`) after any fix.
    - **A blocked commit didn't happen.** If a hook blocks the commit, fix the findings (or resolve them the way the hook asks), re-stage and commit again. Repeat until the commit goes through. If you can't resolve a finding, stop and ask.
+   - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket id and the task (e.g. `<wt> TIX-8 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the ticket id in the subject. Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<id> <T#>: <task title>`.
    - **Record only the commit that went through:** take the sha with `git -C <wt> rev-parse HEAD` right after a successful commit in the worktree. The board refuses a sha that isn't on the ticket's branch or that the base branch already has.
    - **`per-task`:** commit each task on its own, then record it.
      ```
      git -C <wt> add <that task's files, including its test>
-     git -C <wt> commit -m "<id> <T#>: <task title>"
+     git -C <wt> commit -F <scratchpad>/commit-msg.txt
      ```
+     Write the message to a file in your scratchpad and commit with `-F`, never inline in `-m "..."`: generated text can hold quotes, backticks or `$` that the shell would break on.
      `board task <id> <T#> status=done commit=$(git -C <wt> rev-parse HEAD)`
    - **`single`:** don't commit yet. Just record `board task <id> <T#> status=done`. The changes stay in the worktree. Mention once that, until the final commit, this work exists only as uncommitted changes there (the board's delete check will flag them as unsaved).
 6. **Save a note.** `board note <id> "<T# done: what changed; next: T#; gotchas>"`.
@@ -65,7 +67,7 @@ Repeat until `board next <id> --json` reports `allDone`.
 ## 3. Done
 When every task is done:
 1. **Run every test together:** `board test-all <id>`. It runs each task's test in order, then the project's full test command. Everything must pass. A test that passed on its own but fails together usually means two tasks interfere with each other: find out why, fix it (that's work on the task that caused it), and run `test-all` again. If you can't fix it, stop and ask. Don't commit or report "ready" with failing tests.
-2. **`single` commit mode:** make the one commit now, with the same review-then-commit rules as step 5 of the loop. Run `git -C <wt> add -A` (check `git status` first, so only this ticket's work goes in), then commit with the message `<id>: <ticket title>` and a body listing each task (`- T1: …`). Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
+2. **`single` commit mode:** make the one commit now, with the same review-then-commit rules as step 5 of the loop. Run `git -C <wt> add -A` (check `git status` first, so only this ticket's work goes in), then write the message with the `commit-message` skill as in step 5 (pass the ticket id, its title and the task list). If the skill isn't available, use `<id>: <ticket title>` with a body listing each task (`- T1: …`). Commit with `-F <message file>`, as in step 5. Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
 3. Go through each "Done when" item. Check the ones you can actually verify (run the test, try the command) and tick them with `board done-when <id> <n>`. List the ones you couldn't verify.
 4. Summarize in 3-5 lines: tasks done (with commits), the all-tests result, done-when items, anything left.
 5. Say the ticket is ready for a pull request, and stop. Opening a PR isn't part of this skill.
