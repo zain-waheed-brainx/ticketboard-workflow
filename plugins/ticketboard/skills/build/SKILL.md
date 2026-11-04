@@ -41,7 +41,13 @@ Repeat until `board next <id> --json` reports `allDone`.
    Tell each one to change **only its own files**, not to commit, and to report the result of its `--before` run, what it changed, and anything it couldn't do. When they're all back, run each task's after-run (`board test <id> <T#>`) yourself, one at a time.
 4. **Check the result yourself.** Read the diff (`git -C <worktree> diff`, plus new files). A file outside the task's list is only fine if the change clearly belongs to that task. Run lint if the project has it. `board task <id> <T#> status=done` refuses until the task's after-run has passed.
 5. **Review, then commit, following `commitMode`** (from `board next <id> --json`). A commit always comes after a review that passed:
-   - **Review first.** If the repo's commit hooks run a review (e.g. a code-review pre-commit hook), that review is the gate: never skip or bypass hooks (`--no-verify` is not allowed). If no hook reviews the code, review the staged diff yourself before committing: run the `code-review` skill if it's available, otherwise read the diff for bugs against the task's spec. Fix what it finds and re-run the task's test (`board test <id> <T#>`) after any fix.
+   - **Review first.** Never skip or bypass hooks (`--no-verify` is not allowed).
+     - **The repo's commit hook runs a review** (e.g. the brainx code-review pre-commit hook): that review is the gate. Just commit, and handle a block as below.
+     - **No review hook:** review the staged diff yourself before committing, using the first of these that's available:
+       1. the `brainx:code-review` skill. It writes `.code-reviews/brainx-review.md`. Without the hook nothing enforces it, so you do: every finding must be fixed, or skipped or ignored with a reason the user agreed to, before you commit;
+       2. the `code-review` skill;
+       3. reading the diff for bugs against the task's spec.
+     - Fix what the review finds and re-run the task's test (`board test <id> <T#>`) after any fix.
    - **A blocked commit didn't happen.** If a hook blocks the commit, fix the findings (or resolve them the way the hook asks), re-stage and commit again. Repeat until the commit goes through. If you can't resolve a finding, stop and ask.
    - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket id and the task (e.g. `<wt> TIX-8 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the ticket id in the subject. Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<id> <T#>: <task title>`.
    - **Record only the commit that went through:** take the sha with `git -C <wt> rev-parse HEAD` right after a successful commit in the worktree. The board refuses a sha that isn't on the ticket's branch or that the base branch already has.
