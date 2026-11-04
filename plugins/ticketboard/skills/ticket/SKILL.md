@@ -74,6 +74,7 @@ This step works out **how** the plan gets built, after grilling and before appro
    - **Commit mode:** ask last.
      - **One commit per task** (Recommended): small, reviewable commits, and finished work is safe in git between sessions.
      - **One commit for the whole ticket:** a single clean commit at the end. Until then, finished tasks only exist as uncommitted changes in the worktree, and the repo's commit hooks run once instead of per task.
+     - **No commits, I commit myself:** Claude never commits. At the end it stages only the ticket's files, reviews them, and hands over a suggested commit message. Recommend this when the repo's tools generate files that would get committed with the work, e.g. a commit hook that stages everything. Until they commit, the work exists only in the worktree.
 4. **Save.** Write JSON to a scratchpad file and run `board tasks-write <id> --file <file>`. This sets the plan to `tasks-ready`. `doneWhen` comes from the plan's "Done when" section.
    ```json
    {

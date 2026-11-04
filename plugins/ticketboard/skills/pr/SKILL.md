@@ -56,6 +56,7 @@ Reviewers' comments are **never changed without approval**, not even small ones.
    - **Changes the plan:** new scope or a different decision. Mark it as such, since it may belong in a reopened round instead.
 3. **Ask for approval.** Show a numbered list: the comment (who, where, a short quote) and the proposed fix in one or two lines. Ask with AskUserQuestion (multiSelect) which fixes to apply. Options: **All of them**, individual items, or **None, I'll reply myself**. Comments that disagree with the plan get their own question first.
 4. **Apply only the approved fixes**, in the worktree, following the build skill's rules for each fix: ticket review, then code review (self first, then the repo's review hook or the review skill), then commit with the `commit-message` skill and `-F`. Run the affected task tests and `board test-all <id>`.
+   - **`none` commit mode** (`board next <id> --json` shows `commitMode`): don't commit. Stage the fixed files by name, review them, and hand over the same way as build's `none` step. Push after they've committed.
 5. **Push** (`git -C <wt> push`). Then the replies:
    - **With gh:** replying posts on their behalf, so ask first. Show the reply text for each fixed comment (e.g. "Fixed in abc1234"), then post the ones they approve.
    - **Without gh:** give the reply for each comment so they can paste it on GitHub themselves.

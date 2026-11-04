@@ -420,8 +420,8 @@ function renderSide() {
       <label>Run</label>
       <select id="tRun"><option value="step">Task by task (pause after each)</option><option value="all">All in one go (stops only on a problem)</option></select>
       <label>Commits</label>
-      <select id="tCommit"><option value="per-task">One commit per task</option><option value="single">One commit for the whole ticket, at the end</option></select>
-      ${tk.commitMode === 'single' && n.uncommitted.length ? `<div class="sub" style="color:var(--warn)">${n.uncommitted.length} finished task(s) not committed yet: their changes are only in the worktree.</div>` : ''}
+      <select id="tCommit"><option value="per-task">One commit per task</option><option value="single">One commit for the whole ticket, at the end</option><option value="none">No commits: I commit myself</option></select>
+      ${tk.commitMode !== 'per-task' && n.uncommitted.length ? `<div class="sub" style="color:var(--warn)">${n.uncommitted.length} finished task(s) not committed yet: their changes are only in the worktree${tk.commitMode === 'none' ? '. Commit the staged files yourself' : ''}.</div>` : ''}
       <label>Tasks</label>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <button id="tRunAll">Run all tests</button>

@@ -36,9 +36,10 @@ const HELP = `board <command>
   test-all <id> [--json]                every task's test together, then the project's test command
   next <id> [--json]                  what build should do next (one task, or a parallel batch)
   build-mode <id> sequential|parallel
-  commit-mode <id> per-task|single      one commit per task, or one commit for the whole ticket at the end
+  commit-mode <id> per-task|single|none   one commit per task, one for the whole ticket at the end, or none
+                                        (none: Claude never commits; the ticket's files are left staged for you)
   run-mode <id> step|all                pause after every task, or build all tasks in one go
-  commit-record <id> <sha>             (single mode) record the final commit on all finished tasks
+  commit-record <id> <sha>             (single/none mode) record the ticket's commit on all finished tasks
   done-when <id> <n> [--uncheck]        tick a "Done when" item
   grill <id> --q "<question>" --a "<answer>"                  append a grill-me Q&A
   branches <id> [--type T] [--json]     branch name options from saved patterns

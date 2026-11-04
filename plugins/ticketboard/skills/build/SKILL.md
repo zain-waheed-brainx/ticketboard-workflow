@@ -47,7 +47,7 @@ Repeat until `board next <id> --json` reports `allDone`.
    - Fix any gap, re-run the task's test (`board test <id> <T#>`), and only then go on to code review.
 
    `board task <id> <T#> status=done` refuses until the task's after-run has passed.
-5. **Code review, then commit, following `commitMode`** (from `board next <id> --json`). A commit always comes after a ticket review (step 4) and a code review that passed. In `per-task` mode that's every task. In `single` mode the code review and commit happen once, at the end (section 3), on the whole ticket's changes.
+5. **Code review, then commit, following `commitMode`** (from `board next <id> --json`). A commit always comes after a ticket review (step 4) and a code review that passed. In `per-task` mode that's every task. In `single` mode the code review and commit happen once, at the end (section 3), on the whole ticket's changes. In `none` mode the code review happens once at the end and **you never commit**: the user commits.
    - **Self code review first, without a skill.** Look for bugs, missed edge cases, error handling and leftover debug code. Run lint if the project has it. Fix what you find and re-run the task's test.
    - **Then the code-review skill or hook.** Never skip or bypass hooks (`--no-verify` is not allowed).
      - **The repo's commit hook runs a review** (e.g. the brainx code-review pre-commit hook): that review is the gate. Just commit, and handle a block as below.
@@ -66,7 +66,7 @@ Repeat until `board next <id> --json` reports `allDone`.
      ```
      Write the message to a file in your scratchpad and commit with `-F`, never inline in `-m "..."`: generated text can hold quotes, backticks or `$` that the shell would break on.
      `board task <id> <T#> status=done commit=$(git -C <wt> rev-parse HEAD)`
-   - **`single`:** don't code-review or commit yet. The ticket review (step 4) is the only review per task. Just record `board task <id> <T#> status=done`. The changes stay in the worktree. Mention once that, until the final commit, this work exists only as uncommitted changes there (the board's delete check will flag them as unsaved).
+   - **`single` or `none`:** don't code-review or commit yet. The ticket review (step 4) is the only review per task. Just record `board task <id> <T#> status=done`. The changes stay in the worktree. Mention once that, until the final commit, this work exists only as uncommitted changes there (the board's delete check will flag them as unsaved).
 6. **Save a note.** `board note <id> "<T# done: what changed; next: T#; gotchas>"`.
 7. **Pause or carry on, following the run mode.** Use `all` or `step` from the arguments if given (it applies to this run only). Otherwise use `runMode` from `board next <id> --json`.
    - **`step`:** ask with AskUserQuestion: **Continue with `<next task>`** (Recommended), **Run the rest in one go**, **Stop here**, or **Change something first**. "Run the rest in one go" switches this run to `all`. On stop, the note above is where `/ticketboard:resume` picks up.
@@ -87,5 +87,15 @@ When every task is done:
    - Self code review of the whole staged diff first, without a skill. Fix what you find and re-run `board test-all <id>`.
    - Then the code-review skill or hook runs once, on the whole commit.
    - Then write the message with the `commit-message` skill as in step 5 (pass the ticket id, its title and the task list). If the skill isn't available, use `<id>: <ticket title>` with a body listing each task (`- T1: …`). Commit with `-F <message file>`, as in step 5. Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
-4. Summarize in 3-5 lines: tasks done (with commits), the all-tests result, done-when items, anything left.
-5. Say the ticket is ready for a pull request, offer `/ticketboard:pr <id>`, and stop. Opening the PR, reviewers' comments, and cleanup after the merge are in that skill.
+4. **`none` commit mode:** code-review the ticket's changes and leave them staged. **Never run `git commit`**, in any form. This mode is for repos whose tools would commit generated files (build output, caches, review files) along with the work.
+   - **Stage only the ticket's files.** That's the union of every task's `files`, plus any file your ticket reviews accepted as belonging to a task. Stage them by name with `git -C <wt> add -- <file> …`, never with `git add -A` or `git add .`.
+   - **Self code review** of the staged diff (`git -C <wt> diff --cached`), without a skill. Fix what you find, re-stage, and re-run `board test-all <id>`.
+   - **Then the review skill**, on the staged changes only: first `brainx:code-review`, then `code-review`, then reading the diff. No commit happens, so no commit hook runs. If the skill asks whether to review staged or all changes, choose staged only. Fix every finding, or skip or ignore it with a reason the user agrees to, then re-stage.
+   - **Hand over.**
+     - List the staged files (the ticket's work).
+     - List every changed or untracked file you left out, so they can spot junk.
+     - Write a suggested commit message with the `commit-message` skill to a scratchpad file, and show it.
+     - Tell them to commit when they're ready, then run `board commit-record <id> <sha>` (or tell you the sha, and you'll record it).
+     - If the repo's commit hook stages everything (e.g. it runs `git add -A`), warn them: it will also add the files left out, unless those are gitignored or removed first.
+5. Summarize in 3-5 lines: tasks done (with commits), the all-tests result, done-when items, anything left.
+6. Say the ticket is ready for a pull request (in `none` mode: once they've committed), offer `/ticketboard:pr <id>`, and stop. Opening the PR, reviewers' comments, and cleanup after the merge are in that skill.

@@ -27,7 +27,9 @@ const DEFAULT_CONFIG = {
 const PLAN_STATUSES = ['none', 'drafting', 'needs-validation', 'validated', 'tasks-ready', 'approved'];
 const TASK_STATUSES = ['todo', 'doing', 'done', 'skipped'];
 const BUILD_MODES = ['sequential', 'parallel'];
-const COMMIT_MODES = ['per-task', 'single']; // one commit per task, or one commit for the whole ticket at the end
+// one commit per task; one commit for the whole ticket at the end; or none: Claude never commits, the ticket's
+// files are left staged for you to commit (for repos whose tools would commit generated junk along with the work).
+const COMMIT_MODES = ['per-task', 'single', 'none'];
 const RUN_MODES = ['step', 'all']; // pause after every task, or run straight through
 // Per-ticket build settings in tasks.json: key -> [allowed values, default]
 const TASK_SETTINGS = { buildMode: [BUILD_MODES, 'sequential'], commitMode: [COMMIT_MODES, 'per-task'], runMode: [RUN_MODES, 'step'] };
@@ -462,7 +464,7 @@ class Board {
     // Re-sending the commit already on the task is a no-op (it may be on base by now, after a merge).
     const sameCommit = patch.commit && x.commit && (patch.commit === x.commit || tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${patch.commit}^{commit}`], this.root) === x.commit);
     if (sameCommit) patch = { ...patch, commit: x.commit };
-    else if (patch.commit) patch = { ...patch, commit: this.checkCommit(t, patch.commit, { tasks: tk.commitMode === 'single' ? [] : tk.tasks, exceptTask: taskId }) };
+    else if (patch.commit) patch = { ...patch, commit: this.checkCommit(t, patch.commit, { tasks: tk.commitMode === 'per-task' ? tk.tasks : [], exceptTask: taskId }) };
     const changes = {};
     for (const k of ['status', 'commit', 'note', 'parallel']) {
       if (patch[k] === undefined) continue;
@@ -575,7 +577,7 @@ class Board {
     if (base && tryGit(['merge-base', '--is-ancestor', full, base], this.root) !== null) {
       throw new Error(`Commit ${full.slice(0, 7)} is already on the base branch ${t.baseBranch}, so it isn't this ticket's work. Did the commit go through?`);
     }
-    // Per-task commits are one per task (in single mode every task shares the one commit, so no list is passed).
+    // Per-task commits are one per task (in single and none modes the tasks share one commit, so no list is passed).
     const resolve = c => tryGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${c}^{commit}`], this.root);
     const other = tasks.find(o => o.id !== exceptTask && o.commit && (o.commit === full || resolve(o.commit) === full));
     if (other) throw new Error(`Commit ${full.slice(0, 7)} is already recorded for ${other.id}. Did this commit go through? A commit hook (e.g. a review) may have blocked it`);
@@ -1047,8 +1049,8 @@ class Board {
     if (!tk.tasks.length) return '\n## Tasks\n(none yet: run the tasks step)';
     const mark = { todo: '[ ]', doing: '[~]', done: '[x]', skipped: '[-]' };
     const n = this.nextTasks(id);
-    return [`\n## Tasks (${n.done}/${n.total} done, build mode: ${tk.buildMode}, commits: ${tk.commitMode === 'single' ? 'one for the whole ticket at the end' : 'one per task'}, run: ${tk.runMode === 'all' ? 'all in one go' : 'task by task'}${tk.stale ? ', STALE: plan changed after these were made' : ''})`,
-      tk.commitMode === 'single' && n.uncommitted.length ? `Done but not committed yet: ${n.uncommitted.join(', ')} (changes are in the worktree)` : '',
+    return [`\n## Tasks (${n.done}/${n.total} done, build mode: ${tk.buildMode}, commits: ${{ single: 'one for the whole ticket at the end', none: 'none, you commit the staged changes yourself' }[tk.commitMode] || 'one per task'}, run: ${tk.runMode === 'all' ? 'all in one go' : 'task by task'}${tk.stale ? ', STALE: plan changed after these were made' : ''})`,
+      tk.commitMode !== 'per-task' && n.uncommitted.length ? `Done but not committed yet: ${n.uncommitted.join(', ')} (changes are in the worktree${tk.commitMode === 'none' ? '; you commit them yourself' : ''})` : '',
       ...tk.tasks.map(x => `${mark[x.status]} ${x.id} ${x.title}${x.dependsOn.length ? ` (after ${x.dependsOn.join(', ')})` : ''}${x.parallel ? ' [parallel]' : ''}${x.commit ? ` @${x.commit.slice(0, 7)}` : ''} | test: ${this.testState(x)}${x.test?.command ? ` (${x.test.command})` : x.test?.manual ? ` (manual: ${x.test.manual})` : ''}`),
       n.batch.length ? `Next: ${n.batch.map(x => x.id).join(' + ')}` : n.allDone ? 'All tasks done.' : '',
       tk.finalRun ? `All tests together: ${tk.finalRun.ok ? 'PASSED' : 'FAILED'} (${tk.finalRun.ts.slice(0, 16)})` : n.allDone ? 'All tests together: not run yet' : '',
@@ -1089,7 +1091,9 @@ class Board {
       const n = this.nextTasks(t.id);
       const tk = this.tasks(t.id);
       if (!n.allDone) reasons.push(`${n.total - n.done} task(s) not done`);
-      if (n.uncommitted.length) reasons.push(`done but not committed: ${n.uncommitted.join(', ')}`);
+      if (n.uncommitted.length) reasons.push(tk.commitMode === 'none'
+        ? `commit mode is none: commit the ticket's staged changes yourself first (${n.uncommitted.join(', ')}), then run board commit-record ${t.id} <sha>`
+        : `done but not committed: ${n.uncommitted.join(', ')}`);
       if (!tk.finalRun) reasons.push('all tests together (board test-all) not run yet');
       else if (!tk.finalRun.ok) reasons.push('all tests together failed on the last run');
     }
