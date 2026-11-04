@@ -1,7 +1,7 @@
 ---
 name: ticket
-description: Work a ticketboard ticket end to end - create it, plan it with grill-me (or import and validate an existing plan), start it on a named branch in a git worktree, share, edit or delete it. Use for "/ticket", "new ticket", "plan TIX-3", "start TIX-3", or any request about a ticket on the board. For picking work back up, /ticketboard:resume is the direct command.
-argument-hint: "[new|plan|tasks|start|resume|share|edit|delete] [ticket id] [title or notes]"
+description: Work a ticketboard ticket end to end - create it, plan it with grill-me (or import and validate an existing plan), start it on a named branch in a git worktree, reopen a merged ticket for QA or client changes, share, edit or delete it. Use for "/ticket", "new ticket", "plan TIX-3", "start TIX-3", or any request about a ticket on the board. For picking work back up, /ticketboard:resume is the direct command.
+argument-hint: "[new|plan|tasks|start|resume|reopen|share|edit|delete] [ticket id] [title or notes]"
 ---
 
 # Ticket
@@ -112,6 +112,20 @@ If the plan isn't `approved`, say so once before starting, but don't block.
 
 ## resume [id]
 Invoke the `ticketboard:resume` skill with the id and follow it. It is the same as typing `/ticketboard:resume <id>`.
+
+## reopen <id> [what QA or the client found]
+For a ticket whose PR is merged (or that is done) when QA finds a bug or the client asks for a change. It's the same ticket, with all its history, in a new round.
+1. If the reason isn't in the arguments, ask what they found (a short description is enough).
+2. `board show <id>`: if its worktree still exists, run the `ticketboard:pr` skill's **merged** step first, so the old round is cleaned up.
+3. Infer the branch type from the reason (`bugfix` for a QA bug, `enhancement` or `feature` for a client change). Ask only if it's unclear.
+4. Run `board reopen <id> "<reason>" --type <type>`. This:
+   - archives the round's tasks;
+   - adds a `## Round N` section to the plan, keeping the old plan as a version;
+   - plans a new branch (`…-rN`) from the latest base;
+   - moves the card to planning.
+5. Carry on as usual with the round's context:
+   - **plan:** grill only on the new round's changes and fill in its section. Read the earlier rounds' plan, decisions and tasks first (`board show` lists them), and never re-ask what they settled.
+   - **tasks**, approve, **start** (a new worktree on the new branch), then `/ticketboard:build`, then `/ticketboard:pr`.
 
 ## share <id>
 `board share <id>` copies the plan to `docs/plans/<id>-<slug>.md` (tracked by git) and keeps it synced on every plan save. Tell them to commit that file to share it. `board share <id> --off` stops syncing.

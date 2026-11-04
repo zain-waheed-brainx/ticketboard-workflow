@@ -88,4 +88,4 @@ When every task is done:
    - Then the code-review skill or hook runs once, on the whole commit.
    - Then write the message with the `commit-message` skill as in step 5 (pass the ticket id, its title and the task list). If the skill isn't available, use `<id>: <ticket title>` with a body listing each task (`- T1: …`). Commit with `-F <message file>`, as in step 5. Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
 4. Summarize in 3-5 lines: tasks done (with commits), the all-tests result, done-when items, anything left.
-5. Say the ticket is ready for a pull request, and stop. Opening a PR isn't part of this skill.
+5. Say the ticket is ready for a pull request, offer `/ticketboard:pr <id>`, and stop. Opening the PR, reviewers' comments, and cleanup after the merge are in that skill.

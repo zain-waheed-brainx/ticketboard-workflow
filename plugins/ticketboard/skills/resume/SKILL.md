@@ -24,6 +24,8 @@ Run `board prepare <id> --json`. It finds where the ticket's branch is checked o
   - If `options` is empty, the main folder has uncommitted changes. Say so, and stop until they commit or stash them.
 - `"status": "missing"`: the ticket's worktree folder was deleted, but the branch still exists. Ask: **Recreate the worktree** or **Cancel**. On yes, run `board prepare <id> --fix recreate --json`, then `board bootstrap <id>` (in the background if install may take more than about 2 minutes).
 - An error saying the branch no longer exists: tell them, and offer `board start <id>` to begin a fresh branch.
+- **No branch, because the ticket was reopened** (`board show` has `round=N` and a planned branch): there's no folder yet. Skip to step 4. The next step is planning the new round (`/ticketboard:ticket plan <id>`).
+- **Done and cleaned up, not reopened:** say the work is merged. If they're back because of QA or a client change, offer `/ticketboard:ticket reopen <id>`.
 
 ## 3. Move into it
 Every file edit and command for this ticket happens in the `worktree` path that `prepare` returned, never in another checkout.
@@ -38,13 +40,17 @@ Run `board show <id>`. Treat it as authoritative. It contains:
 - commits and uncommitted changes
 - the project's dev and test commands: use those, don't guess
 - recent history
+- the PR and its state, and for a reopened ticket, the earlier rounds (branch, PR, tasks) and what this round is for
 
 ## 5. Continue
 1. Give a 3-line summary: where it stands, what was done last, what's next.
 2. Pick what comes next:
+   - **PR open** (`pr=#n open` in `board show`): run the `ticketboard:pr` skill's **comments** step. It reads reviewers' comments, prepares fixes, and applies only the ones they approve.
+   - **PR merged:** run the `ticketboard:pr` skill's **merged** step (clean up).
+   - **All tasks done, no PR yet:** offer `/ticketboard:pr <id>`.
    - **Approved with tasks:** offer `/ticketboard:build <id>`, which continues from the next task (`board next <id>`).
    - **`validated` or `tasks-ready`:** offer to finish the tasks step or to approve.
    - **No plan:** offer `/ticketboard:ticket plan <id>`.
 3. Carry on with what they choose.
 4. At natural pauses and before you stop, save a note: `board note <id> "<done, next, gotchas>"`. The next resume starts from it.
-5. Keep the column current: `board move <id> review` once it's ready for review, `done` once it's merged.
+5. The column follows the PR: `board pr-record` moves the card to review, and `board cleanup` moves it to done.

@@ -50,6 +50,12 @@ const HELP = `board <command>
   history <id>
   delete-check <id> [--json]            would deleting lose uncommitted files or unpushed commits?
   delete <id> [--delete-branch] [--force]   remove ticket + its worktree; refuses unless safe (or --force)
+  pr-check <id> [--json]                ready for a PR? push state, gh available, minimal title/body draft
+  pr-record <id> <url|number>           record the PR opened for the current round; card moves to review
+  pr <id> [--json]                      the ticket's PR, refreshed from GitHub when gh is installed
+  pr-state <id> open|merged|closed      set the PR state by hand (when gh isn't installed)
+  cleanup <id> [--delete-branch]        after the PR is merged: remove the worktree, move to done (ticket + history stay)
+  reopen <id> "<what QA/the client found>" [--type bugfix]   new round: plan section, tasks, branch, worktree, PR
   config [--json]
   serve [--port 4317]                   start the web board`;
 
@@ -274,6 +280,42 @@ async function main() {
     case 'commit-mode': return out(`${b.resolveId(pos[0])} commit mode: ${b.setCommitMode(pos[0], pos[1]).commitMode}`);
     case 'run-mode': return out(`${b.resolveId(pos[0])} run mode: ${b.setRunMode(pos[0], pos[1]).runMode}`);
     case 'commit-record': return out(`${b.resolveId(pos[0])}: commit ${pos[1]} recorded on ${b.recordCommit(pos[0], pos[1]).join(', ') || '(no uncommitted done tasks)'}`);
+    case 'pr-check': {
+      const r = b.prCheck(pos[0]);
+      if (flags.json) return out(r, true);
+      return out([
+        `${r.id}: ${r.ready ? 'READY for a PR' : 'NOT READY for a PR'}${r.round > 1 ? ` (round ${r.round})` : ''}`,
+        ...r.reasons.map(x => `! ${x}`),
+        `branch: ${r.branch || '-'} -> base ${r.base}`,
+        `pushed: ${r.upstream ? (r.pushed ? `yes (${r.upstream})` : `${r.unpushed} commit(s) not pushed to ${r.upstream}`) : 'no upstream yet'}`,
+        `gh: ${r.gh ? 'installed' : 'not installed (open the PR in the browser, then: board pr-record <id> <url>)'}`,
+        r.pr ? `PR: #${r.pr.number} ${r.pr.state}` : '',
+        '', `title: ${r.title}`, 'body:', r.body
+      ].filter(x => x !== '').join('\n'));
+    }
+    case 'pr-record': {
+      const v = String(pos[1] || '');
+      const t = b.recordPr(pos[0], /^\d+$/.test(v) ? { number: v } : { url: v });
+      return out(`${t.id}: PR #${t.pr.number} recorded${t.pr.url ? ` (${t.pr.url})` : ''}; column ${t.column}`);
+    }
+    case 'pr': {
+      const r = b.refreshPr(pos[0]);
+      if (flags.json) return out(r, true);
+      if (!r.pr) return out(`${b.resolveId(pos[0])}: no PR recorded`);
+      return out(`${b.resolveId(pos[0])}: PR #${r.pr.number} ${r.pr.state}${r.pr.reviewDecision ? `, review: ${r.pr.reviewDecision.toLowerCase()}` : ''}${r.pr.url ? `\n${r.pr.url}` : ''}${r.gh === false ? '\n(gh not installed: state is as last recorded; set it with board pr-state)' : ''}${r.error ? `\n(gh: ${r.error})` : ''}`);
+    }
+    case 'pr-state': {
+      const t = b.setPrState(pos[0], pos[1]);
+      return out(`${t.id}: PR #${t.pr.number} ${t.pr.state}`);
+    }
+    case 'cleanup': {
+      const r = b.cleanup(pos[0], { deleteBranch: !!flags['delete-branch'] });
+      return out(`${r.ticket.id} cleaned up: ${[...r.done, 'moved to done'].join(', ')}. Ticket, plan and history kept; reopen it for QA or client changes.`);
+    }
+    case 'reopen': {
+      const t = b.reopen(pos[0], { reason: pos.slice(1).join(' '), type: flags.type });
+      return out(`${t.id} reopened as round ${t.round}: planned branch ${t.plannedBranch}; plan has a new "Round ${t.round}" section to plan, then tasks, start, build, pr as usual.`);
+    }
     case 'done-when': {
       const tk = b.checkDoneWhen(pos[0], Number(pos[1]) - 1, flags.uncheck ? false : true);
       return out(tk.doneWhen.map((d, i) => `${d.checked ? '[x]' : '[ ]'} ${i + 1}. ${d.text}`).join('\n'));

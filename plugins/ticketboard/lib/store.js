@@ -1003,9 +1003,12 @@ class Board {
       `# ${t.id}: ${t.title}`,
       `type=${t.type} column=${t.column} priority=${t.priority} plan=${t.planStatus}${t.planSource ? ` (${t.planSource})` : ''}`,
       `branch=${t.branch || (t.plannedBranch ? `${t.plannedBranch} (planned, not created)` : '-')} worktree=${t.worktree || '-'}${t.shared ? ` shared=${t.sharedPath}` : ''}`,
+      t.round > 1 ? `round=${t.round} (reopened: ${t.reopenReason})` : '',
+      t.pr ? `pr=#${t.pr.number} ${t.pr.state}${t.pr.url ? ` ${t.pr.url}` : ''}` : '',
       t.description ? `\n## Description\n${t.description}` : '',
       `\n## Plan\n${this.plan(t.id).trim() || '(no plan yet)'}`,
       this.tasksSummary(t.id),
+      this.roundsSummary(t.id),
       `\n## Grill-me decisions\n${this.grill(t.id).replace(/^# .*\n/, '').trim() || '(none)'}`,
       sessions ? `\n## Session notes\n${sessions}` : '',
       gitInfo,
@@ -1026,6 +1029,177 @@ class Board {
       tk.finalRun ? `All tests together: ${tk.finalRun.ok ? 'PASSED' : 'FAILED'} (${tk.finalRun.ts.slice(0, 16)})` : n.allDone ? 'All tests together: not run yet' : '',
       tk.doneWhen.length ? `Done when:\n${tk.doneWhen.map(d => `${d.checked ? '[x]' : '[ ]'} ${d.text}`).join('\n')}` : ''
     ].filter(Boolean).join('\n');
+  }
+
+  // ---------- pull requests + rounds ----------
+  // gh is optional. Returns undefined when gh isn't installed; throws on a gh error.
+  gh(args, cwd = this.root) {
+    try {
+      // Timeout: the board server is single-threaded, so a hung network call or auth prompt must not freeze it.
+      return execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000, maxBuffer: 10 * 1024 * 1024 }).trim();
+    } catch (e) {
+      if (e.code === 'ENOENT') return undefined;
+      if (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM') throw Object.assign(new Error('gh timed out after 15s'), { stderr: 'gh timed out after 15s' });
+      throw e;
+    }
+  }
+
+  hasGh() { return this.gh(['--version']) !== undefined; }
+
+  // Is the ticket ready for a PR? Also gives a minimal draft title/body for the pr skill to refine.
+  prCheck(id) {
+    const t = this.get(id);
+    const reasons = [];
+    const wt = t.worktree;
+    if (!t.branch) reasons.push(`${t.id} has no branch yet`);
+    if (!wt || !fs.existsSync(wt)) reasons.push(`${t.id} has no worktree`);
+    if (this.hasTasks(t.id)) {
+      const n = this.nextTasks(t.id);
+      const tk = this.tasks(t.id);
+      if (!n.allDone) reasons.push(`${n.total - n.done} task(s) not done`);
+      if (n.uncommitted.length) reasons.push(`done but not committed: ${n.uncommitted.join(', ')}`);
+      if (!tk.finalRun) reasons.push('all tests together (board test-all) not run yet');
+      else if (!tk.finalRun.ok) reasons.push('all tests together failed on the last run');
+    }
+    const dirty = wt && fs.existsSync(wt)
+      ? statusLines(wt, ['--untracked-files=all']).filter(l => !(l.startsWith('?? ') && (t.generatedFiles || []).includes(l.slice(3)))) : [];
+    if (dirty.length) reasons.push(`${dirty.length} uncommitted file(s) in the worktree`);
+    const base = t.baseBranch || this.detectBase();
+    const range = t.branch ? `${base}..${t.branch}` : null;
+    const commits = range ? (tryGit(['log', '--no-merges', '--format=%s', range], this.root) || '').split('\n').filter(Boolean) : [];
+    if (t.branch && !commits.length) reasons.push(`no commits on ${t.branch} that ${base} doesn't have`);
+    const upstream = t.branch ? tryGit(['rev-parse', '--abbrev-ref', `${t.branch}@{upstream}`], this.root) : null;
+    const unpushed = upstream ? (tryGit(['log', '--oneline', `${upstream}..${t.branch}`], this.root) || '').split('\n').filter(Boolean).length : null;
+    const round = t.round || 1;
+    return {
+      id: t.id, ready: reasons.length === 0, reasons, branch: t.branch, base, worktree: wt, round,
+      upstream, unpushed, pushed: !!upstream && unpushed === 0, gh: this.hasGh(), pr: t.pr || null,
+      // Minimal description: the title plus a few lines of what changed.
+      title: `${t.id}: ${t.title}${round > 1 ? ` (round ${round})` : ''}`,
+      body: [...commits.slice(0, 8).reverse().map(c => `- ${c}`), commits.length > 8 ? `- …and ${commits.length - 8} more` : '', '', `Ticket: ${t.id}${round > 1 ? `, round ${round}` : ''}`]
+        .filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n').trim()
+    };
+  }
+
+  // Record the PR that was opened for the ticket's current round, and move the card to review.
+  recordPr(id, { url, number, state = 'open' } = {}, actor) {
+    const t = this.get(id);
+    const u = String(url || '').trim();
+    if (u && !/^https:\/\/\S+\/pull\/\d+/.test(u)) throw new Error(`Not a pull request URL: ${u}`);
+    const num = Number(number || (u.match(/\/pull\/(\d+)/) || [])[1]);
+    if (!num) throw new Error('Give the PR URL (or its number)');
+    if (!['open', 'merged', 'closed'].includes(state)) throw new Error('PR state must be open, merged or closed');
+    t.pr = { number: num, url: u || null, state, round: t.round || 1, branch: t.branch, base: t.baseBranch, opened: now() };
+    if (this.config().columns.includes('review') && state === 'open') t.column = 'review';
+    this.save(t);
+    this.log(t.id, 'pr-opened', { pr: num, url: t.pr.url, round: t.pr.round }, actor);
+    return t;
+  }
+
+  // Refresh the PR's state from GitHub (needs gh). Without gh, the state is left as recorded.
+  refreshPr(id, actor) {
+    const t = this.get(id);
+    if (!t.pr) return { pr: null };
+    let raw;
+    try {
+      raw = this.gh(['pr', 'view', String(t.pr.url || t.pr.number), '--json', 'state,mergedAt,url,number,reviewDecision'], t.worktree && fs.existsSync(t.worktree) ? t.worktree : this.root);
+    } catch (e) {
+      return { pr: t.pr, gh: true, error: String(e.stderr || e.message).trim() };
+    }
+    if (raw === undefined) return { pr: t.pr, gh: false };
+    const v = JSON.parse(raw);
+    const state = String(v.state || '').toLowerCase();
+    return { pr: this.setPrState(t.id, state, { mergedAt: v.mergedAt || null, reviewDecision: v.reviewDecision || null, url: v.url }, actor).pr, gh: true };
+  }
+
+  // Also used directly when gh isn't installed: board pr-state <id> merged.
+  setPrState(id, state, extra = {}, actor) {
+    const t = this.get(id);
+    if (!t.pr) throw new Error(`${t.id} has no PR recorded`);
+    if (!['open', 'merged', 'closed'].includes(state)) throw new Error('PR state must be open, merged or closed');
+    const before = t.pr.state;
+    t.pr = { ...t.pr, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v != null)), state, checked: now() };
+    if (state === 'merged' && !t.pr.mergedAt) t.pr.mergedAt = now();
+    this.save(t);
+    if (before !== state) this.log(t.id, 'pr-state', { pr: t.pr.number, from: before, to: state }, actor);
+    return t;
+  }
+
+  // After the PR is merged: remove the worktree (and optionally the local branch), move to done.
+  // The ticket, plan, tasks and history all stay, so a later QA or client change can reopen it.
+  cleanup(id, { deleteBranch = false, actor } = {}) {
+    const t = this.get(id);
+    if (!t.pr || t.pr.state !== 'merged') throw new Error(`${t.id}'s PR isn't merged${t.pr ? ` (it's ${t.pr.state})` : ''}; clean up only after the merge`);
+    const check = this.deleteCheck(t.id);
+    // A squash or rebase merge leaves the branch's own commits off the base, but they're on the remote: only
+    // work no remote has (or uncommitted files) would be lost.
+    if (!check.safe) throw new Error(`Not safe to clean up ${t.id}: ${check.reasons.join('; ')}`);
+    const done = [];
+    if (check.worktreeExists && !check.isMain) {
+      // --force: only the files setup created (.env, launch.json) are left, which plain remove refuses.
+      git(['worktree', 'remove', '--force', t.worktree], this.root);
+      done.push(`removed worktree ${t.worktree}`);
+    }
+    tryGit(['worktree', 'prune'], this.root);
+    if (deleteBranch && t.branch && !check.isMain && t.branch !== this.currentBranch(this.root)) {
+      done.push(tryGit(['branch', '-D', t.branch], this.root) !== null ? `deleted local branch ${t.branch}` : `kept local branch ${t.branch} (git refused to delete it)`);
+    }
+    const t2 = this.get(t.id);
+    if (!check.isMain) t2.worktree = null;
+    t2.column = 'done';
+    t2.cleanedUp = now();
+    this.save(t2);
+    this.log(t.id, 'cleaned-up', { pr: t.pr.number, done }, actor);
+    return { ticket: t2, done };
+  }
+
+  // A merged ticket gets QA bugs or client changes: same ticket and history, a new round with its own plan
+  // section, tasks, branch (from the latest base), worktree and PR. Earlier rounds stay readable.
+  reopen(id, { reason, type, actor } = {}) {
+    const t = this.get(id);
+    if (!reason || !String(reason).trim()) throw new Error('Say what changed: the QA issue or the client request');
+    if (t.column !== 'done' && t.pr?.state !== 'merged') throw new Error(`${t.id} isn't done or merged yet; keep working in its current round`);
+    if (t.worktree && fs.existsSync(t.worktree) && path.resolve(t.worktree) !== path.resolve(this.root)) {
+      throw new Error(`${t.id}'s worktree ${t.worktree} still exists. Clean it up first (board cleanup ${t.id}) so the new round starts from the latest base`);
+    }
+    if (type && !this.config().branch.types.includes(type)) throw new Error(`Unknown branch type ${type}`);
+    const round = t.round || 1;
+    const archive = `tasks-r${round}.json`;
+    if (fs.existsSync(this.tasksFile(t.id))) fs.renameSync(this.tasksFile(t.id), path.join(this.tdir(t.id), archive));
+    const next = round + 1;
+    const header = `## Round ${next}: ${String(reason).trim().split('\n')[0]}`;
+    const plan = this.plan(t.id).replace(/\s*$/, '');
+    // writePlan keeps the previous plan as a version and re-syncs a shared copy.
+    this.writePlan(t.id, `${plan}\n\n${header}\n\nReopened ${now().slice(0, 10)}.\n\n${String(reason).trim()}\n\n### Plan for this round\n(to be planned)\n`, { source: 'reopen', actor, note: `round ${next}` });
+    const t2 = this.get(t.id);
+    t2.rounds = [...(t2.rounds || []), {
+      round, branch: t2.branch, baseBranch: t2.baseBranch, pr: t2.pr || null, tasks: fs.existsSync(path.join(this.tdir(t.id), archive)) ? archive : null, closed: now()
+    }];
+    t2.round = next;
+    t2.reopenReason = String(reason).trim();
+    t2.pr = null;
+    t2.branch = null;
+    t2.baseBranch = null;
+    t2.worktree = null;
+    t2.planStatus = 'drafting';
+    t2.column = 'planning';
+    let name = `${this.branchName(t2, { type: type || t2.type })}-r${next}`;
+    for (let i = 2; this.branchExists(name); i++) name = `${this.branchName(t2, { type: type || t2.type })}-r${next}-${i}`;
+    t2.plannedBranch = name;
+    this.save(t2);
+    this.log(t.id, 'reopened', { round: next, reason: t2.reopenReason, plannedBranch: name }, actor);
+    return t2;
+  }
+
+  // Earlier rounds, for context: branch, PR and the task titles that were built.
+  roundsSummary(id) {
+    const t = this.get(id);
+    if (!(t.rounds || []).length) return '';
+    return ['\n## Earlier rounds', ...t.rounds.map(r => {
+      const tk = r.tasks ? readJSON(path.join(this.tdir(t.id), r.tasks), { tasks: [] }) : { tasks: [] };
+      const pr = r.pr ? ` PR #${r.pr.number} ${r.pr.state}${r.pr.url ? ` ${r.pr.url}` : ''}` : ' no PR';
+      return [`Round ${r.round}: ${r.branch || '-'}${pr}`, ...tk.tasks.map(x => `  - ${x.id} ${x.title}${x.commit ? ` @${x.commit.slice(0, 7)}` : ''}`)].join('\n');
+    }), `Round ${t.round || 1} (now): ${t.reopenReason || ''}`].join('\n');
   }
 
   // Changes whenever anything under .board changes; the UI polls this.

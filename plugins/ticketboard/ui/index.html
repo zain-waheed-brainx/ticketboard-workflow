@@ -67,6 +67,7 @@ header .repo { color: var(--muted); font-size: 12px; overflow: hidden; text-over
 .task .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .task details { margin-top: 6px; font-size: 13px; }
 .task summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.pr-open { color: var(--ok); } .pr-merged { color: #a371f7; } .pr-closed { color: var(--danger); }
 .chip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; }
 .t-feature { color: var(--feature); } .t-hotfix { color: var(--hotfix); } .t-enhancement { color: var(--enhancement); }
 .t-bugfix { color: var(--bugfix); } .t-chore { color: var(--chore); }
@@ -150,6 +151,9 @@ body.noscroll { overflow: hidden; }
         <button id="dStart" class="primary">Start work</button>
         <button id="dShare"></button>
         <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
+        <button id="dPr" title="Copy the chat command that opens a PR for this ticket">Open PR</button>
+        <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
+        <button id="dReopen" title="QA issue or client change: start a new round with a new branch and worktree, keeping all history">Reopen</button>
         <button id="dDelete" class="danger">Delete</button>
         <button id="dClose" class="ghost" aria-label="Close">✕</button>
       </div>
@@ -284,6 +288,7 @@ function renderBoard() {
         <div class="title">${esc(t.title)}</div>
         ${t.progress ? `<div class="prog" title="${t.progress.done} of ${t.progress.total} tasks done${t.progress.stale ? ' (plan changed since tasks were made)' : ''}"><div class="bar"><i style="width:${Math.round(100 * t.progress.done / t.progress.total)}%"></i></div><span>${t.progress.done}/${t.progress.total}${t.progress.stale ? ' ⚠' : ''}</span></div>` : ''}
         ${t.branch ? `<div class="branch">⎇ ${esc(t.branch)}</div>` : t.plannedBranch ? `<div class="branch" style="opacity:.7" title="Planned, not created yet">⎇ ${esc(t.plannedBranch)} · planned</div>` : ''}
+        ${t.pr || t.round > 1 ? `<div class="branch">${t.pr ? `<span class="chip pr-${esc(t.pr.state)}">PR #${esc(t.pr.number)} ${esc(t.pr.state)}</span> ` : ''}${t.round > 1 ? `<span class="chip" title="Reopened: ${esc(t.reopenReason || '')}">round ${esc(t.round)}</span>` : ''}</div>` : ''}
       </article>`).join('')}</div></section>`;
   }).join('');
   board.querySelectorAll('.card').forEach(el => {
@@ -321,8 +326,21 @@ async function loadTicket(id, quiet) {
   if (document.activeElement !== $('#dLabels')) $('#dLabels').value = (t.labels || []).join(', ');
   $('#dBranch').innerHTML = t.branch ? `<code>${esc(t.branch)}</code> ${t.worktree ? `<br>${esc(t.worktree)}` : ''}`
     : t.plannedBranch ? `Planned: <code>${esc(t.plannedBranch)}</code> (created when you start work)` : 'Not started';
+  if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span> <a href="#" id="dPrRefresh">refresh</a>`;
+  if (t.round > 1) $('#dBranch').innerHTML += `<br>Round ${esc(t.round)}: ${esc(t.reopenReason || '')}`;
+  $('#dPr').style.display = t.branch && !t.pr ? '' : 'none';
+  $('#dCleanup').style.display = t.pr?.state === 'merged' && t.worktree && t.worktree !== S.root ? '' : 'none';
+  // Reopen once the round is finished and its worktree is cleaned up (a new round gets a fresh worktree).
+  const finished = t.column === 'done' || t.pr?.state === 'merged';
+  $('#dReopen').style.display = finished && $('#dCleanup').style.display === 'none' ? '' : 'none';
   if (t.bootstrap) $('#dBranch').innerHTML += `<br>Setup: <a href="#" id="dSetupLink">${esc(t.bootstrap.status)}</a>`;
   if ($('#dSetupLink')) $('#dSetupLink').onclick = e => { e.preventDefault(); tab = 'setup'; renderSide(); };
+  // Handlers go on after the last #dBranch innerHTML write, which would otherwise drop them.
+  if ($('#dPrRefresh')) $('#dPrRefresh').onclick = async e => {
+    e.preventDefault();
+    const r = await api('POST', `/api/tickets/${open}/pr/refresh`);
+    toast(r.gh === false ? 'gh is not installed: PR state is as last recorded' : r.error ? `gh: ${r.error}` : `PR #${r.pr.number} is ${r.pr.state}`); load();
+  };
   $('#dStart').textContent = t.branch ? 'Change branch' : 'Start work';
   $('#dResume').style.display = t.branch ? '' : 'none';
   $('#dShare').textContent = t.shared ? 'Unshare plan' : 'Share plan';
@@ -432,7 +450,8 @@ function renderSide() {
       <div class="actions"><button id="dDescSave">Save description</button></div>
       <label>Add a session note (kept as context for later)</label><textarea id="dNote" rows="3" placeholder="e.g. Paused after API layer; UI still to do"></textarea>
       <div class="actions"><button id="dNoteSave">Add note</button></div>
-      <label>Session notes</label>${(t.sessions || []).slice().reverse().map(s => `<div class="hint">${when(s.ts)}: ${esc(s.note)}</div>`).join('') || '<div class="hint">None yet</div>'}`;
+      <label>Session notes</label>${(t.sessions || []).slice().reverse().map(s => `<div class="hint">${when(s.ts)}: ${esc(s.note)}</div>`).join('') || '<div class="hint">None yet</div>'}
+      ${(t.rounds || []).length ? `<label>Earlier rounds</label>${t.rounds.map(r => `<div class="hint">Round ${esc(r.round)}: <code>${esc(r.branch || '-')}</code>${r.pr ? ` · PR ${r.pr.url ? `<a href="${esc(r.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(r.pr.number)}</a>` : `#${esc(r.pr.number)}`} ${esc(r.pr.state)}` : ''} · closed ${when(r.closed)}</div>`).join('')}` : ''}`;
     $('#dDescSave').onclick = () => patch({ description: $('#dDesc').value }).then(() => toast('Saved'));
     $('#dNoteSave').onclick = async () => { await api('POST', `/api/tickets/${open}/note`, { text: $('#dNote').value }); toast('Note saved'); load(); };
   } else if (tab === 'history') {
@@ -517,6 +536,28 @@ $('#dShare').onclick = async () => {
 $('#dResume').onclick = async () => {
   const cmd = `/ticketboard:resume ${open}`;
   try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+};
+$('#dPr').onclick = async () => {
+  const cmd = `/ticketboard:pr ${open}`;
+  try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+};
+$('#dCleanup').onclick = async () => {
+  const t = openData.ticket;
+  if (!confirm(`${t.id}'s PR is merged. Remove its worktree and move it to done?\n\nThe ticket, plan, tasks and history stay, so it can be reopened for QA or client changes.`)) return;
+  const deleteBranch = confirm(`Also delete the local branch ${t.branch}? (It's merged; OK = delete, Cancel = keep)`);
+  try { const r = await api('POST', `/api/tickets/${open}/cleanup`, { deleteBranch }); toast(r.done.join(', ') || 'Cleaned up'); } catch (e) { alert(e.message); }
+  load();
+};
+$('#dReopen').onclick = async () => {
+  const reason = prompt('What did QA or the client find? (starts a new round on this ticket)');
+  if (!reason || !reason.trim()) return;
+  const type = prompt(`Branch type for the new round (${S.config.branch.types.join(', ')})`, 'bugfix');
+  if (type === null) return;
+  try {
+    const t = await api('POST', `/api/tickets/${open}/reopen`, { reason, type: type.trim() || undefined });
+    toast(`Round ${t.round}: plan it, then build on ${t.plannedBranch}`);
+  } catch (e) { alert(e.message); }
+  load();
 };
 let delCheck = null;
 $('#dDelete').onclick = async () => {

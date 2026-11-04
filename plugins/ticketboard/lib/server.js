@@ -103,6 +103,12 @@ function routes(b) {
     ['PUT', /^\/api\/tickets\/([\w-]+)\/run-mode$/, ([, id], body) => b.setRunMode(id, body.mode, ACTOR)],
     ['PUT', /^\/api\/tickets\/([\w-]+)\/done-when\/(\d+)$/, ([, id, n], body) => b.checkDoneWhen(id, Number(n), body.checked !== false, ACTOR)],
     ['PATCH', /^\/api\/tickets\/([\w-]+)$/, ([, id], body) => b.update(id, body, ACTOR)],
+    // Refreshing asks GitHub and may update the ticket, so it's a POST.
+    ['POST', /^\/api\/tickets\/([\w-]+)\/pr\/refresh$/, ([, id]) => b.refreshPr(id, ACTOR)],
+    ['PUT', /^\/api\/tickets\/([\w-]+)\/pr$/, ([, id], body) => (body.url || body.number
+      ? b.recordPr(id, { url: body.url, number: body.number }, ACTOR) : b.setPrState(id, body.state, {}, ACTOR))],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/cleanup$/, ([, id], body) => b.cleanup(id, { deleteBranch: !!body.deleteBranch, actor: ACTOR })],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/reopen$/, ([, id], body) => b.reopen(id, { reason: body.reason, type: body.type || undefined, actor: ACTOR })],
     ['GET', /^\/api\/tickets\/([\w-]+)\/delete-check$/, ([, id]) => b.deleteCheck(id)],
     ['DELETE', /^\/api\/tickets\/([\w-]+)$/, ([, id], body) => b.delete(id, { force: !!body.force, confirm: body.confirm, deleteBranch: !!body.deleteBranch, actor: ACTOR })],
     ['PUT', /^\/api\/tickets\/([\w-]+)\/plan$/, ([, id], body) => b.writePlan(id, body.content || '', { actor: ACTOR, source: body.source })],
