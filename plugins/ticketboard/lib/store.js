@@ -18,7 +18,10 @@ const DEFAULT_CONFIG = {
     base: '' // empty = the branch checked out in the main checkout
   },
   worktreeDir: '../{repo}.worktrees/{branchSafe}',
-  sharedPlansDir: 'docs/plans'
+  sharedPlansDir: 'docs/plans',
+  // gh: 'auto' uses GitHub CLI when it's installed; 'off' never does (e.g. the org doesn't allow it),
+  // so PRs are opened in the browser and their URL and state are recorded by hand.
+  pr: { gh: 'auto' }
 };
 
 const PLAN_STATUSES = ['none', 'drafting', 'needs-validation', 'validated', 'tasks-ready', 'approved'];
@@ -82,6 +85,15 @@ function readJSON(f, fallback) {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
 }
 
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+
+// pr.gh from a hand-edited profile: case-insensitive. Anything that isn't "auto" means off, because the
+// safe reading of a typo in an org that forbids gh is "don't run gh".
+function normPr(pr) {
+  const g = String(pr.gh ?? 'auto').trim().toLowerCase();
+  return { ...pr, gh: g === 'auto' ? 'auto' : 'off' };
+}
+
 function writeJSON(f, data) {
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`; // unique: board and CLI may write at once
@@ -126,7 +138,8 @@ class Board {
     const team = { ...(p.branch || {}), ...(p.baseBranch ? { base: p.baseBranch } : {}) };
     return {
       ...DEFAULT_CONFIG, ...(p.worktreeDir ? { worktreeDir: p.worktreeDir } : {}), ...local,
-      branch: { ...DEFAULT_CONFIG.branch, ...team, ...(local.branch || {}) }
+      branch: { ...DEFAULT_CONFIG.branch, ...team, ...(local.branch || {}) },
+      pr: normPr({ ...DEFAULT_CONFIG.pr, ...(isObj(p.pr) ? p.pr : {}), ...(isObj(local.pr) ? local.pr : {}) })
     };
   }
 
@@ -1034,6 +1047,7 @@ class Board {
   // ---------- pull requests + rounds ----------
   // gh is optional. Returns undefined when gh isn't installed; throws on a gh error.
   gh(args, cwd = this.root) {
+    if (this.config().pr.gh === 'off') return undefined;
     try {
       // Timeout: the board server is single-threaded, so a hung network call or auth prompt must not freeze it.
       return execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000, maxBuffer: 10 * 1024 * 1024 }).trim();
@@ -1045,6 +1059,12 @@ class Board {
   }
 
   hasGh() { return this.gh(['--version']) !== undefined; }
+
+  setGhMode(mode) {
+    if (!['auto', 'off'].includes(mode)) throw new Error('gh mode must be auto (use it when installed) or off (never use it)');
+    const cur = this.localConfig().pr;
+    return this.saveConfig({ pr: { ...(isObj(cur) ? cur : {}), gh: mode } }).pr;
+  }
 
   // Is the ticket ready for a PR? Also gives a minimal draft title/body for the pr skill to refine.
   prCheck(id) {
@@ -1073,12 +1093,22 @@ class Board {
     const round = t.round || 1;
     return {
       id: t.id, ready: reasons.length === 0, reasons, branch: t.branch, base, worktree: wt, round,
-      upstream, unpushed, pushed: !!upstream && unpushed === 0, gh: this.hasGh(), pr: t.pr || null,
+      upstream, unpushed, pushed: !!upstream && unpushed === 0, gh: this.hasGh(), ghMode: this.config().pr.gh, pr: t.pr || null,
+      compareUrl: t.branch ? this.compareUrl(base, t.branch) : null,
       // Minimal description: the title plus a few lines of what changed.
       title: `${t.id}: ${t.title}${round > 1 ? ` (round ${round})` : ''}`,
       body: [...commits.slice(0, 8).reverse().map(c => `- ${c}`), commits.length > 8 ? `- …and ${commits.length - 8} more` : '', '', `Ticket: ${t.id}${round > 1 ? `, round ${round}` : ''}`]
         .filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n').trim()
     };
+  }
+
+  // Browser link to open a PR without gh (GitHub remotes only; null for others).
+  compareUrl(base, branch) {
+    const u = tryGit(['remote', 'get-url', 'origin'], this.root) || '';
+    const m = u.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/);
+    if (!m) return null;
+    const enc = s => s.split('/').map(encodeURIComponent).join('/');
+    return `https://github.com/${m[1]}/${m[2]}/compare/${enc(base)}...${enc(branch)}?expand=1`;
   }
 
   // Record the PR that was opened for the ticket's current round, and move the card to review.

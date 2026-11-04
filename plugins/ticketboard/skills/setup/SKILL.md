@@ -39,6 +39,7 @@ Then ask one question at a time with AskUserQuestion, and only about what's stil
 - Copy the real `.env`, or create it from `.env.example`?
 - Which base branch?
 - Should the team share these branch types and naming pattern?
+- Can the team use GitHub CLI (`gh`) for pull requests? Options: **Use gh when installed** (Recommended), or **No gh, use the browser** (e.g. the org doesn't allow it). For "no gh", add `"pr": { "gh": "off" }` to the profile.
 
 Finish with: **Save this setup** (Recommended) or **Change something**.
 
@@ -60,7 +61,7 @@ Write the final profile to a scratchpad JSON file using this shape:
   "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{id}-{slug}" }
 }
 ```
-Include `branch` only if they want the team to share it. Personal patterns still override it locally.
+Include `branch` only if they want the team to share it, and `"pr": { "gh": "off" }` only if the team can't use gh. Personal settings still override both locally (`board gh auto|off`).
 
 Then run:
 1. `board init`

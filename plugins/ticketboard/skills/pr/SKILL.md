@@ -8,6 +8,13 @@ argument-hint: "[ticket id] [open|comments|merged]"
 
 Use the `board` CLI (the plugin's `bin/` is on PATH; if `board` isn't found, use `<this skill's base directory>/../../bin/board`). All git and gh commands run in the ticket's worktree.
 
+**gh or browser.** `board pr-check <id> --json` says whether gh is used (`gh`). It's false when gh isn't installed, or when it's turned off with `board gh off` (e.g. the org doesn't allow GitHub CLI). Without gh, everything that talks to GitHub goes through the user's browser, and nothing new needs org approval:
+- you push with plain git;
+- they open the PR from a link you give them;
+- they paste back the PR URL, and later its merge and its comments.
+
+Never ask them to install gh or to sign it in.
+
 Pick the ticket from the arguments, or with `board which`. Then pick the step:
 - An action given in the arguments.
 - Otherwise, `board pr <id> --json`:
@@ -29,12 +36,16 @@ Pick the ticket from the arguments, or with `board which`. Then pick the step:
      gh pr create --base <base> --head <branch> --title "<title>" --body-file <file>
      ```
      Run it in `<wt>`, then record the URL it prints: `board pr-record <id> <url>`.
-   - **No gh:** give the compare URL. For GitHub that's `https://github.com/<owner>/<repo>/compare/<base>...<branch>?expand=1`, with owner and repo taken from `git remote get-url origin`. Give them the title and body to paste. Ask for the PR URL once it's open, then run `board pr-record <id> <url>`.
+   - **No gh:**
+     1. Give them pr-check's `compareUrl`, which opens GitHub's "new pull request" page for `<base>...<branch>`. If it's null (not a GitHub remote), give the branch and base so they can open the PR on their host.
+     2. Give them the title and the body, each in its own code block, so they're easy to copy.
+     3. Tell them to create it as **ready for review**, not a draft.
+     4. Ask them to paste the PR URL once it's open, then run `board pr-record <id> <url>`. They can also use the **Add PR link** button on the board.
 6. The card moves to **review**. Tell them reviewers' comments are handled with `/ticketboard:pr <id>` (or `/ticketboard:resume <id>`).
 
 ## comments
 Reviewers' comments are **never changed without approval**, not even small ones.
-1. **Read them** (needs gh; without it, ask them to paste the comments):
+1. **Read them.** Without gh, ask them to paste the comments from the PR page: the file and line, who wrote it, and the text. Several at once is fine. With gh:
    ```
    gh pr view <pr> --json reviews,comments,reviewDecision
    gh api repos/{owner}/{repo}/pulls/<n>/comments
@@ -45,11 +56,15 @@ Reviewers' comments are **never changed without approval**, not even small ones.
    - **Changes the plan:** new scope or a different decision. Mark it as such, since it may belong in a reopened round instead.
 3. **Ask for approval.** Show a numbered list: the comment (who, where, a short quote) and the proposed fix in one or two lines. Ask with AskUserQuestion (multiSelect) which fixes to apply. Options: **All of them**, individual items, or **None, I'll reply myself**. Comments that disagree with the plan get their own question first.
 4. **Apply only the approved fixes**, in the worktree, following the build skill's rules for each fix: ticket review, then code review (self first, then the repo's review hook or the review skill), then commit with the `commit-message` skill and `-F`. Run the affected task tests and `board test-all <id>`.
-5. **Push** (`git -C <wt> push`). Replying on GitHub posts on their behalf, so ask first: show the reply text for each fixed comment (e.g. "Fixed in abc1234"), then post the ones they approve.
+5. **Push** (`git -C <wt> push`). Then the replies:
+   - **With gh:** replying posts on their behalf, so ask first. Show the reply text for each fixed comment (e.g. "Fixed in abc1234"), then post the ones they approve.
+   - **Without gh:** give the reply for each comment so they can paste it on GitHub themselves.
 6. `board note <id> "PR #<n>: fixed <comments>; waiting on <x>"`.
 
 ## merged
-1. Run `board pr <id>` to confirm the merge. Without gh, ask them, then run `board pr-state <id> merged`.
+1. Confirm the merge.
+   - **With gh:** `board pr <id>`.
+   - **Without gh:** the board can't check GitHub, so ask them whether it's merged. On yes, run `board pr-state <id> merged`. They can also use the **Mark merged** button on the board.
 2. Ask with AskUserQuestion: **Clean up now** (Recommended: remove the worktree, keep the local branch), **Clean up and delete the local branch**, or **Not now**.
 3. Run `board cleanup <id>` (add `--delete-branch` if they picked that). It refuses if the worktree has uncommitted work or commits no remote has; show what it lists.
 4. Say the ticket is done and that its plan, tasks, PR and history stay on the board. If QA or the client finds something later, `/ticketboard:ticket reopen <id> "<what they found>"` starts a new round with full context.

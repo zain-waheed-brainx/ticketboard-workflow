@@ -152,6 +152,8 @@ body.noscroll { overflow: hidden; }
         <button id="dShare"></button>
         <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
         <button id="dPr" title="Copy the chat command that opens a PR for this ticket">Open PR</button>
+        <button id="dPrLink" title="Opened the PR in the browser? Paste its URL here to track it">Add PR link</button>
+        <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
         <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
         <button id="dReopen" title="QA issue or client change: start a new round with a new branch and worktree, keeping all history">Reopen</button>
         <button id="dDelete" class="danger">Delete</button>
@@ -326,9 +328,11 @@ async function loadTicket(id, quiet) {
   if (document.activeElement !== $('#dLabels')) $('#dLabels').value = (t.labels || []).join(', ');
   $('#dBranch').innerHTML = t.branch ? `<code>${esc(t.branch)}</code> ${t.worktree ? `<br>${esc(t.worktree)}` : ''}`
     : t.plannedBranch ? `Planned: <code>${esc(t.plannedBranch)}</code> (created when you start work)` : 'Not started';
-  if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span> <a href="#" id="dPrRefresh">refresh</a>`;
+  if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span>${S.config.pr?.gh === 'off' ? '' : ' <a href="#" id="dPrRefresh">refresh</a>'}`;
   if (t.round > 1) $('#dBranch').innerHTML += `<br>Round ${esc(t.round)}: ${esc(t.reopenReason || '')}`;
   $('#dPr').style.display = t.branch && !t.pr ? '' : 'none';
+  $('#dPrLink').style.display = t.branch && !t.pr ? '' : 'none';
+  $('#dPrMerged').style.display = t.pr?.state === 'open' ? '' : 'none';
   $('#dCleanup').style.display = t.pr?.state === 'merged' && t.worktree && t.worktree !== S.root ? '' : 'none';
   // Reopen once the round is finished and its worktree is cleaned up (a new round gets a fresh worktree).
   const finished = t.column === 'done' || t.pr?.state === 'merged';
@@ -540,6 +544,18 @@ $('#dResume').onclick = async () => {
 $('#dPr').onclick = async () => {
   const cmd = `/ticketboard:pr ${open}`;
   try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+};
+$('#dPrLink').onclick = async () => {
+  const url = prompt('Paste the PR URL (e.g. https://github.com/org/repo/pull/42)');
+  if (!url || !url.trim()) return;
+  try { const t = await api('PUT', `/api/tickets/${open}/pr`, { url: url.trim() }); toast(`PR #${t.pr.number} recorded; moved to ${t.column}`); } catch (e) { alert(e.message); }
+  load();
+};
+$('#dPrMerged').onclick = async () => {
+  const t = openData.ticket;
+  if (!confirm(`Mark PR #${t.pr.number} as merged? Only do this once it's merged on GitHub.`)) return;
+  try { await api('PUT', `/api/tickets/${open}/pr`, { state: 'merged' }); toast('Marked merged: you can clean up now'); } catch (e) { alert(e.message); }
+  load();
 };
 $('#dCleanup').onclick = async () => {
   const t = openData.ticket;

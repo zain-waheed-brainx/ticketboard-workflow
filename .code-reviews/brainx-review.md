@@ -1,11 +1,11 @@
 ---
-diff_hash: 35200418331c1b52e2a12b6ea51bd707dd0d6a5858c57cacd30e3e9ee2f84896
-reviewed_at: 2026-11-04T11:59:29Z
+diff_hash: a2bf156d64d230b17e577c61a4791be89014cc3290e7de8f3d4e9e162970aded
+reviewed_at: 2026-11-04T13:08:14Z
 ---
 
 ## Summary
 
-Adds pull-request and "round" support to ticketboard: `Board.prCheck/recordPr/refreshPr/setPrState/cleanup/reopen/roundsSummary` in `lib/store.js`, matching CLI commands in `bin/board`, API routes in `lib/server.js`, UI buttons/chips in `ui/index.html`, a new `pr` skill, and updates to the build/resume/ticket skills. No stack marker matched (no package.json etc.), so a generic review was applied. Logic is largely sound: PR URLs are validated, cleanup is gated on a merged PR plus `deleteCheck`, and reopen refuses while a worktree exists. Two issues found.
+Adds an opt-out for the GitHub CLI in ticketboard: a `pr.gh` setting (`auto`/`off`) from the team profile or local config, a `board gh auto|off` command, `Board.setGhMode`, a browser compare URL in `prCheck`, UI buttons to record a PR URL and mark it merged by hand, and matching pr/setup skill text. No stack marker matched (no package.json etc.), so a generic review was applied. The change is sound: the compare URL is URL-encoded and limited to GitHub remotes, the new UI buttons call existing server routes, and `gh()` short-circuits before spawning when off. Two low-impact issues. The previous review file is removed in this diff.
 
 ## Findings
 
@@ -13,24 +13,22 @@ Adds pull-request and "round" support to ticketboard: `Board.prCheck/recordPr/re
 
 ### High (0)
 
-### Medium (1)
-- **plugins/ticketboard/lib/store.js:1087** — `gh()` uses `execFileSync` with no `timeout`, and `refreshPr` runs it from the `GET /api/tickets/:id/pr` route (and the UI "refresh" link). A slow or hung network or an auth prompt blocks the single-threaded board server, freezing every request and UI polling. A GET route also writes ticket state through `setPrState`. *(correctness)*
-  - status: open
-  - dev_reasoning: N/A
-  - ai_reasoning: Pass a `timeout` (e.g. 15s) and `maxBuffer` to `execFileSync`, and handle the timeout error as a `gh` error, which `refreshPr` already returns. Consider making refresh a POST since it mutates.
+### Medium (0)
 
-### Low (1)
-- **plugins/ticketboard/ui/index.html:341** — `$('#dPrRefresh').onclick` is assigned, then the `if (t.bootstrap)` line does `$('#dBranch').innerHTML += ...`, which re-serializes the element and drops the handler. For tickets with a bootstrap record, "refresh" becomes a dead `href="#"` link that only jumps to the top. *(correctness)*
-  - status: open
+### Low (0)
+- **plugins/ticketboard/lib/store.js:1041** — With `pr.gh = 'off'`, `gh()` returns undefined, so `refreshPr` returns `gh: false` and the CLI `board pr` prints "gh not installed: state is as last recorded", which is wrong when gh was turned off on purpose. `bin/board` already distinguishes the two cases in `pr-check`. *(consistency)*
+  - status: fixed
   - dev_reasoning: N/A
-  - ai_reasoning: Build the full `#dBranch` HTML first, then assign `onclick` handlers (`dPrRefresh`, `dSetupLink`) after the last `innerHTML` write.
+  - ai_reasoning: Fixed: the `pr` command now says "gh is off" when `config().pr.gh === 'off'`. (Was: have the `pr` command's message use the config mode (e.g. "gh is off") the way `pr-check` does.)
+- **plugins/ticketboard/lib/store.js:1042** — `config().pr.gh` is read straight from the committed profile or local config with no validation; only `setGhMode` checks the value. A hand-edited `"pr": {"gh": "OFF"}` or a non-object `pr` silently behaves as `auto`, so gh runs in an org that forbids it. *(correctness)*
+  - status: fixed
+  - dev_reasoning: N/A
+  - ai_reasoning: Fixed: `config()` now runs `normPr`, which lowercases and treats anything but auto as off, and ignores a non-object `pr`. (Was: normalize in `config()` or in `gh()` (lowercase, accept only auto/off, otherwise fall back to auto with a warning.)
 
 ## Reviewed files
+- .code-reviews/brainx-review.md (deleted)
 - plugins/ticketboard/bin/board
-- plugins/ticketboard/lib/server.js
 - plugins/ticketboard/lib/store.js
+- plugins/ticketboard/skills/pr/SKILL.md
+- plugins/ticketboard/skills/setup/SKILL.md
 - plugins/ticketboard/ui/index.html
-- plugins/ticketboard/skills/build/SKILL.md (skimmed)
-- plugins/ticketboard/skills/pr/SKILL.md (skimmed)
-- plugins/ticketboard/skills/resume/SKILL.md (skimmed)
-- plugins/ticketboard/skills/ticket/SKILL.md (skimmed)
