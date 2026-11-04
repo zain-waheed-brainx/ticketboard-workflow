@@ -1,6 +1,6 @@
 ---
 name: build
-description: Build an approved ticketboard ticket task by task in its worktree. Runs each task from its spec, tests it, reviews it against the ticket and then for code quality, commits it (one commit per task, or one for the whole ticket, as chosen), and ticks it off; independent tasks run in parallel subagents when the ticket's build mode says so. Runs task by task (pausing after each) or all in one go, as chosen; you can stop and resume later. Use for "/build", "build TIX-8", "start coding the ticket", "do the next task".
+description: Build an approved ticketboard ticket task by task in its worktree. Runs each task from its spec, tests it, reviews it against the ticket and then for code quality, commits it (one commit per task, one for the whole ticket, or none so you commit yourself, as chosen), and ticks it off; independent tasks run in parallel subagents when the ticket's build mode says so. Runs task by task (pausing after each) or all in one go, as chosen; you can stop and resume later. Use for "/build", "build TIX-8", "start coding the ticket", "do the next task".
 argument-hint: "[ticket id] [all|step]"
 ---
 
