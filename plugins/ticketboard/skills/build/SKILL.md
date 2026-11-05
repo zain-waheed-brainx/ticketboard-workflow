@@ -17,6 +17,7 @@ Use the `board` CLI (the plugin's `bin/` is on PATH; if `board` isn't found, use
 3. **Started?** If the ticket hasn't been started (no branch), run the `ticketboard:ticket` skill's **start** step. That covers "move my current work into a worktree" too.
 4. **Folder:** run `board prepare <id> --json` and handle its statuses exactly as `ticketboard:resume` does. Move into the returned `worktree`, or use absolute paths there. Every edit, test and commit for this ticket happens in that folder.
 5. **Context:** run `board show <id>`. It has the plan, decisions, tasks, the latest note, and the project's dev and test commands.
+6. **Worktree setup:** if `board show` says `worktree setup: running`, setup (e.g. `npm ci`) is still going. That happens when build was opened straight from the board's Start button. Wait for it before running any test: check `board show <id>` again about every 30 seconds, using Monitor if you have it rather than sleep loops. If it says `failed`, show the end of the log (the board's Setup tab, or `.board/tickets/<id>/bootstrap.log`) and help fix it, then run `board bootstrap <id>`.
 
 ## 2. Loop
 Repeat until `board next <id> --json` reports `allDone`.

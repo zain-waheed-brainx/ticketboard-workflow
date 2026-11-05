@@ -151,6 +151,7 @@ body.noscroll { overflow: hidden; }
         <button id="dStart" class="primary">Start work</button>
         <button id="dShare"></button>
         <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
+        <button id="dBuild" class="primary" title="Open a new Claude Code session in this ticket's worktree, running /ticketboard:build">Build</button>
         <button id="dPr" title="Check it's ready, push, and open the pull request on GitHub">Open PR</button>
         <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
         <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
@@ -206,6 +207,8 @@ body.noscroll { overflow: hidden; }
   <p class="hint" id="sHint"></p>
   <label>Branch type</label><select id="sType"></select>
   <div id="sPicker"></div>
+  <label style="display:flex;gap:6px;align-items:center;color:var(--text)" id="sBuildRow"><input type="checkbox" id="sBuild"> Then start building in a new Claude Code session</label>
+  <div class="hint" id="sBuildHint"></div>
   <div class="err" id="sErr"></div>
   <div class="actions"><button data-close>Cancel</button><button class="primary" id="sGo">Start</button></div>
 </div></div>
@@ -349,6 +352,9 @@ async function loadTicket(id, quiet) {
   if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span>${S.config.pr?.gh === 'off' ? '' : ' <a href="#" id="dPrRefresh">refresh</a>'}`;
   if (t.round > 1) $('#dBranch').innerHTML += `<br>Round ${esc(t.round)}: ${esc(t.reopenReason || '')}`;
   $('#dPr').style.display = t.branch && !t.pr ? '' : 'none';
+  const nextUp = openData.next;
+  $('#dBuild').style.display = t.branch && t.worktree && buildReady(t, openData.tasks) && !t.pr
+    && !(nextUp && nextUp.allDone && openData.tasks.finalRun?.ok) ? '' : 'none';
   $('#dPrMerged').style.display = t.pr?.state === 'open' ? '' : 'none';
   $('#dCleanup').style.display = t.pr?.state === 'merged' && t.worktree && t.worktree !== S.root ? '' : 'none';
   // Reopen once the round is finished and its worktree is cleaned up (a new round gets a fresh worktree).
@@ -840,6 +846,11 @@ $('#dStart').onclick = async () => {
   options($('#sType'), [...new Set([...S.config.branch.types, t.type])], t.type);
   $('#sErr').textContent = '';
   $('#sHint').textContent = t.planStatus === 'approved' || t.planStatus === 'validated' ? `Plan is ${t.planStatus}.` : `Heads up: plan is "${t.planStatus}". You can still start.`;
+  // Building needs approved tasks; otherwise Start only creates the branch and worktree.
+  const canBuild = buildReady(t, openData.tasks);
+  $('#sBuild').checked = canBuild; $('#sBuild').disabled = !canBuild;
+  $('#sBuildHint').textContent = canBuild ? 'Opens the Claude desktop app in the new worktree with /ticketboard:build ready to run.'
+    : 'Building needs an approved plan with tasks. Plan it and approve first; you can build later with the Build button.';
   startPicker.reset();
   $('#mStart').classList.add('open');
   await startPicker.refresh();
@@ -854,10 +865,27 @@ $('#sGo').onclick = async () => {
     const t = v.branchMode === 'adopt'
       ? await api('POST', `/api/tickets/${open}/adopt`, { branch: v.branch })
       : await api('POST', `/api/tickets/${open}/start`, body);
-    $('#mStart').classList.remove('open'); toast(adoptToast(t) || `On ${t.branch}`); load();
+    $('#mStart').classList.remove('open'); toast(adoptToast(t) || `On ${t.branch}`);
+    if ($('#sBuild').checked && !$('#sBuild').disabled && t.worktree) openClaudeBuild(t);
+    load();
   } catch (e) { $('#sErr').textContent = e.message; }
   $('#sGo').disabled = false;
 };
+
+// Build needs an approved plan whose tasks exist and aren't stale (shared by Start and the Build button).
+const buildReady = (t, tk) => t.planStatus === 'approved' && tk.tasks.length > 0 && !tk.stale;
+
+// Opens a new Claude Code session (Claude desktop app) in the ticket's worktree with the build command filled in.
+// Uses the desktop app's claude://code/new link (folder + q): undocumented, so the command is also copied as a fallback.
+function openClaudeBuild(t) {
+  const cmd = `/ticketboard:build ${t.id}`;
+  const url = `claude://code/new?folder=${encodeURIComponent(t.worktree)}&q=${encodeURIComponent(cmd)}`;
+  const a = document.createElement('a');
+  a.href = url; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+  navigator.clipboard?.writeText(cmd).catch(() => {});
+  toast(`Opening Claude Code in ${t.worktree.split(/[\\/]/).pop()}. If nothing opens, paste "${cmd}" (copied) in a Claude session there.`);
+}
+$('#dBuild').onclick = () => openClaudeBuild(openData.ticket);
 
 function renderSettings() {
   const b = S.config.branch;
