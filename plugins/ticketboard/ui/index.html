@@ -150,7 +150,7 @@ body.noscroll { overflow: hidden; }
         <input class="title" id="dTitle">
         <button id="dStart" class="primary">Start work</button>
         <button id="dShare"></button>
-        <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
+        <button id="dResume" title="Open a new Claude Code session in this ticket's worktree with /ticketboard:resume typed in (press Enter there)">Resume</button>
         <button id="dBuild" class="primary" title="Open a new Claude Code session in this ticket's worktree with /ticketboard:build typed in (press Enter there)">Build</button>
         <button id="dPr" title="Check it's ready, push, and open the pull request on GitHub">Open PR</button>
         <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
@@ -560,9 +560,11 @@ $('#dShare').onclick = async () => {
   const t = await api('POST', `/api/tickets/${open}/share`, { on: !openData.ticket.shared });
   toast(t.shared ? `Shared at ${t.sharedPath}. Commit it to share.` : 'Plan no longer synced'); load();
 };
-$('#dResume').onclick = async () => {
-  const cmd = `/ticketboard:resume ${open}`;
-  try { await navigator.clipboard.writeText(cmd); toast(`Copied "${cmd}": paste it in your Claude chat`); } catch { prompt('Paste this in your Claude chat:', cmd); }
+// Resume opens in the ticket's worktree; if that folder is gone (or the ticket uses the main checkout), in the
+// main checkout, where /ticketboard:resume offers to recreate or switch.
+$('#dResume').onclick = () => {
+  const t = openData.ticket;
+  openClaude(openData.worktreeExists ? t.worktree : S.root, `/ticketboard:resume ${t.id}`, 'resume');
 };
 // Open PR panel: ready check, push, title/description to copy, GitHub link, then record the PR URL.
 let prInfo = null;
@@ -875,17 +877,17 @@ $('#sGo').onclick = async () => {
 // Build needs an approved plan whose tasks exist and aren't stale (shared by Start and the Build button).
 const buildReady = (t, tk) => t.planStatus === 'approved' && tk.tasks.length > 0 && !tk.stale;
 
-// Opens a new Claude Code session (Claude desktop app) in the ticket's worktree with the build command filled in.
-// Uses the desktop app's claude://code/new link (folder + q): undocumented, so the command is also copied as a fallback.
-function openClaudeBuild(t) {
-  const cmd = `/ticketboard:build ${t.id}`;
-  const url = `claude://code/new?folder=${encodeURIComponent(t.worktree)}&q=${encodeURIComponent(cmd)}`;
+// Opens a new Claude Code session (Claude desktop app) in a folder with a ticketboard command typed in.
+// Uses the desktop app's claude://code/new link (folder + q). The app never sends a prompt that came from a link,
+// so the user presses Enter. The link is undocumented, so the command is also copied as a fallback.
+function openClaude(folder, cmd, what) {
+  const url = `claude://code/new?folder=${encodeURIComponent(folder)}&q=${encodeURIComponent(cmd)}`;
   const a = document.createElement('a');
   a.href = url; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   navigator.clipboard?.writeText(cmd).catch(() => {});
-  // The app fills the prompt in but never sends a prompt that came from a link: the user presses Enter.
-  toast(`Opening Claude Code in ${t.worktree.split(/[\\/]/).pop()}: press Enter there to start building. If nothing opens, paste "${cmd}" (copied) in a Claude session there.`);
+  toast(`Opening Claude Code in ${folder.split(/[\\/]/).pop()}: press Enter there to ${what}. If nothing opens, paste "${cmd}" (copied) in a Claude session there.`);
 }
+const openClaudeBuild = t => openClaude(t.worktree, `/ticketboard:build ${t.id}`, 'start building');
 $('#dBuild').onclick = () => openClaudeBuild(openData.ticket);
 
 function renderSettings() {

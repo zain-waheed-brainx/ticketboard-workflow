@@ -93,7 +93,8 @@ function routes(b) {
     }],
     ['GET', /^\/api\/tickets\/([\w-]+)$/, ([, id]) => ({
       ticket: b.get(id), plan: b.plan(id), grill: b.grill(id), history: b.history(id), versions: b.versions(id),
-      tasks: b.tasks(id), next: b.nextTasks(id)
+      tasks: b.tasks(id), next: b.nextTasks(id),
+      worktreeExists: (t => !!t.worktree && fs.existsSync(t.worktree))(b.get(id))
     })],
     ['PATCH', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)$/, ([, id, tid], body) => b.updateTask(id, tid, body, ACTOR)],
     ['POST', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)\/test$/, ([, id, tid], body) => b.runTaskTest(id, tid, body.phase || 'after', { actor: ACTOR })],
