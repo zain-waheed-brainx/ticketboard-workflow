@@ -151,7 +151,7 @@ body.noscroll { overflow: hidden; }
         <button id="dStart" class="primary">Start work</button>
         <button id="dShare"></button>
         <button id="dResume" title="Copy the chat command that resumes this ticket in Claude">Resume</button>
-        <button id="dBuild" class="primary" title="Open a new Claude Code session in this ticket's worktree, running /ticketboard:build">Build</button>
+        <button id="dBuild" class="primary" title="Open a new Claude Code session in this ticket's worktree with /ticketboard:build typed in (press Enter there)">Build</button>
         <button id="dPr" title="Check it's ready, push, and open the pull request on GitHub">Open PR</button>
         <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
         <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
@@ -849,7 +849,7 @@ $('#dStart').onclick = async () => {
   // Building needs approved tasks; otherwise Start only creates the branch and worktree.
   const canBuild = buildReady(t, openData.tasks);
   $('#sBuild').checked = canBuild; $('#sBuild').disabled = !canBuild;
-  $('#sBuildHint').textContent = canBuild ? 'Opens the Claude desktop app in the new worktree with /ticketboard:build ready to run.'
+  $('#sBuildHint').textContent = canBuild ? 'Opens the Claude desktop app in the new worktree with /ticketboard:build typed in: press Enter there to start.'
     : 'Building needs an approved plan with tasks. Plan it and approve first; you can build later with the Build button.';
   startPicker.reset();
   $('#mStart').classList.add('open');
@@ -883,7 +883,8 @@ function openClaudeBuild(t) {
   const a = document.createElement('a');
   a.href = url; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
   navigator.clipboard?.writeText(cmd).catch(() => {});
-  toast(`Opening Claude Code in ${t.worktree.split(/[\\/]/).pop()}. If nothing opens, paste "${cmd}" (copied) in a Claude session there.`);
+  // The app fills the prompt in but never sends a prompt that came from a link: the user presses Enter.
+  toast(`Opening Claude Code in ${t.worktree.split(/[\\/]/).pop()}: press Enter there to start building. If nothing opens, paste "${cmd}" (copied) in a Claude session there.`);
 }
 $('#dBuild').onclick = () => openClaudeBuild(openData.ticket);
 
