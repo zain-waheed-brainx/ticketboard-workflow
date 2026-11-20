@@ -1,6 +1,6 @@
 {
   "name": "ticketboard",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Local ticket board: grill-me planning, a branch and worktree per ticket, test-first builds with ticket and code review, PRs, and full history for later rounds.",
   "author": {
     "name": "Zain Waheed"
