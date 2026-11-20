@@ -197,6 +197,8 @@ body.noscroll { overflow: hidden; }
   </div>
   <label>Description</label><textarea id="nDesc" rows="3" placeholder="What and why. Planning happens with /ticketboard:ticket plan."></textarea>
   <h4 style="margin:16px 0 4px">Branch</h4>
+  <label>Short name <span class="hint">({slug} in branch names: a few meaningful words; leave empty to make it from the title)</span></label>
+  <input id="nSlug" class="w100" autocomplete="off">
   <div id="nPicker"></div>
   <div class="err" id="nErr"></div>
   <div class="actions"><button data-close>Cancel</button><button class="primary" id="nCreate">Create</button></div>
@@ -206,6 +208,8 @@ body.noscroll { overflow: hidden; }
   <h3>Start work</h3>
   <p class="hint" id="sHint"></p>
   <label>Branch type</label><select id="sType"></select>
+  <label>Short name <span class="hint">({slug} in branch names; leave empty to make it from the title)</span></label>
+  <input id="sSlug" class="w100" autocomplete="off">
   <div id="sPicker"></div>
   <label style="display:flex;gap:6px;align-items:center;color:var(--text)" id="sBuildRow"><input type="checkbox" id="sBuild"> Then start building in a new Claude Code session</label>
   <div class="hint" id="sBuildHint"></div>
@@ -815,13 +819,15 @@ function adoptToast(t) {
 const newPicker = makePicker($('#nPicker'), {
   modes: ['later', 'new', 'current', 'adopt'],
   needsInput: () => $('#nTitle').value.trim(),
-  fetchOptions: custom => api('GET', `/api/branch-preview?title=${encodeURIComponent($('#nTitle').value.trim())}&type=${encodeURIComponent($('#nType').value)}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+  fetchOptions: custom => api('GET', `/api/branch-preview?title=${encodeURIComponent($('#nTitle').value.trim())}&type=${encodeURIComponent($('#nType').value)}&slug=${encodeURIComponent($('#nSlug').value.trim())}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+    .then(o => { $('#nSlug').placeholder = o.autoSlug ? `e.g. ${o.autoSlug}` : ''; return o; })
 });
 $('#nTitle').oninput = () => newPicker.soon();
+$('#nSlug').oninput = () => newPicker.soon();
 $('#nType').onchange = () => newPicker.refresh();
 $('#btnNew').onclick = () => {
   options($('#nType'), S.config.branch.types, S.config.branch.defaultType);
-  $('#nTitle').value = ''; $('#nDesc').value = ''; $('#nErr').textContent = '';
+  $('#nTitle').value = ''; $('#nDesc').value = ''; $('#nErr').textContent = ''; $('#nSlug').value = ''; $('#nSlug').placeholder = '';
   newPicker.reset(); newPicker.refresh();
   $('#mNew').classList.add('open'); $('#nTitle').focus();
 };
@@ -831,7 +837,7 @@ $('#nCreate').onclick = async () => {
   try { branch = newPicker.value(); } catch (msg) { return $('#nErr').textContent = msg; }
   $('#nCreate').disabled = true;
   try {
-    const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, ...branch });
+    const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, slug: $('#nSlug').value.trim() || null, ...branch });
     $('#mNew').classList.remove('open'); await load(); openTicket(t.id);
     toast(t.warning || adoptToast(t) || (t.branch ? `${t.id} on ${t.branch}` : `${t.id} created${t.plannedBranch ? `, branch ${t.plannedBranch} saved for later` : ''}`));
   } catch (e) { $('#nErr').textContent = e.message; }
@@ -840,13 +846,15 @@ $('#nCreate').onclick = async () => {
 
 const startPicker = makePicker($('#sPicker'), {
   modes: ['new', 'current', 'adopt'],
-  fetchOptions: custom => api('GET', `/api/tickets/${open}/branches?type=${encodeURIComponent($('#sType').value)}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+  fetchOptions: custom => api('GET', `/api/tickets/${open}/branches?type=${encodeURIComponent($('#sType').value)}&slug=${encodeURIComponent($('#sSlug').value.trim())}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+    .then(o => { $('#sSlug').placeholder = o.autoSlug ? `e.g. ${o.autoSlug}` : ''; return o; })
 });
 $('#sType').onchange = () => startPicker.refresh();
+$('#sSlug').oninput = () => startPicker.soon();
 $('#dStart').onclick = async () => {
   const t = openData.ticket;
   options($('#sType'), [...new Set([...S.config.branch.types, t.type])], t.type);
-  $('#sErr').textContent = '';
+  $('#sErr').textContent = ''; $('#sSlug').value = t.slug || '';
   $('#sHint').textContent = t.planStatus === 'approved' || t.planStatus === 'validated' ? `Plan is ${t.planStatus}.` : `Heads up: plan is "${t.planStatus}". You can still start.`;
   // Building needs approved tasks; otherwise Start only creates the branch and worktree.
   const canBuild = buildReady(t, openData.tasks);
@@ -864,6 +872,7 @@ $('#sGo').onclick = async () => {
   $('#sGo').disabled = true;
   try {
     if (v.branchMode !== 'current' && $('#sType').value !== openData.ticket.type) await api('PATCH', `/api/tickets/${open}`, { type: $('#sType').value });
+    if (($('#sSlug').value.trim() || null) !== (openData.ticket.slug || null)) await api('PATCH', `/api/tickets/${open}`, { slug: $('#sSlug').value.trim() || null });
     const t = v.branchMode === 'adopt'
       ? await api('POST', `/api/tickets/${open}/adopt`, { branch: v.branch })
       : await api('POST', `/api/tickets/${open}/start`, body);

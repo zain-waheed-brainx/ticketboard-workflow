@@ -14,15 +14,18 @@ Pick the action from the arguments. With none: if `board which` names a ticket, 
 
 ## new
 1. Infer the title and type (feature, hotfix, enhancement, bugfix or chore) from the request. Ask only if the type is unclear.
-2. Run `board suggest "<title>" --type <type>` to get branch names (the `*` line is the recommended name), and `board work --json` to see whether the main checkout has work in progress.
-3. Ask one AskUserQuestion about the branch: **Save `<recommended name>` for later** (Recommended), **Create it now**, **Use current branch `<name>`**, or **Pick later**. If `board work` reports `hasWork` and no `owner`, replace "Pick later" with **Move my current work into a worktree** and recommend it. Describe what moves: the branch, N commits and M uncommitted files, and that the main folder goes back to the base branch. Offer the other suggested names, or a custom name or pattern, through "Other". If they give a custom pattern, offer to save it as the default with `board pattern save`.
-4. Create the ticket:
-   - Save for later: `board new "<title>" --type <type> --desc "<why>" --branch <name>`. The name is reused when work starts.
+2. **Pick a short name** for `{slug}` in branch names: 2-4 meaningful words that say what the work is. Use a common synonym or abbreviation when it's shorter and still clear. Drop filler ("the ability to", "add", "for"). Never cut a word in half. For example:
+   - "Add the ability to search for users across all teams" becomes `user-search`;
+   - "Fix login redirect loop after password reset on mobile Safari" becomes `login-redirect-loop`.
+3. Run `board suggest "<title>" --type <type> --slug <short name>` to get branch names (the `*` line is the recommended name), and `board work --json` to see whether the main checkout has work in progress.
+4. Ask one AskUserQuestion about the branch: **Save `<recommended name>` for later** (Recommended), **Create it now**, **Use current branch `<name>`**, or **Pick later**. If `board work` reports `hasWork` and no `owner`, replace "Pick later" with **Move my current work into a worktree** and recommend it. Describe what moves: the branch, N commits and M uncommitted files, and that the main folder goes back to the base branch. Offer the other suggested names, or a custom name or pattern, through "Other". If they give a custom pattern, offer to save it as the default with `board pattern save`.
+5. Create the ticket, always passing `--slug <short name>`. If they picked a name in "Other", use the short name that fits it.
+   - Save for later: `board new "<title>" --type <type> --desc "<why>" --slug <short name> --branch <name>`. The name is reused when work starts.
    - Create it now: the same command plus `--start` (add `--no-worktree` only if asked).
-   - Use current branch: `board new "<title>" --type <type> --current`.
+   - Use current branch: `board new "<title>" --type <type> --slug <short name> --current`.
    - Pick later: leave out `--branch`.
-   - Move my current work: `board new "<title>" --type <type> --adopt`. If the main checkout is on the base branch itself, also pass `--branch <name>` for the new branch. Report what moved. If it says the changes were kept in a stash, show the `git stash apply` line it printed.
-5. Offer to plan it now.
+   - Move my current work: `board new "<title>" --type <type> --slug <short name> --adopt`. If the main checkout is on the base branch itself, also pass `--branch <name>` for the new branch. Report what moved. If it says the changes were kept in a stash, show the `git stash apply` line it printed.
+6. Offer to plan it now.
 
 ## plan <id>
 Ask with AskUserQuestion how to plan:

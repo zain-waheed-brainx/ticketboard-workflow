@@ -12,10 +12,11 @@ const HELP = `board <command>
   detect [--json] [--root DIR]          propose a project profile from the repo's files (writes nothing)
   project [show|write [--file F]|trust] ticketboard.project.json: show, write (and trust), or trust as-is
   bootstrap <id>                        (re)run worktree setup: copy files, launch.json, setup commands
-  new "<title>" [--type T] [--desc D] [--priority P] [--branch B] [--start | --current] [--no-worktree]
+  new "<title>" [--type T] [--desc D] [--priority P] [--slug S] [--branch B] [--start | --current] [--no-worktree]
+                                        --slug: short name for {slug} in branch names (else made from the title)
                                         --branch saves a planned name; --start creates it (+ worktree) now;
                                         --adopt moves the main checkout's current work into its worktree
-  suggest "<title>" [--type T] [--pattern P]   branch name suggestions before the ticket exists
+  suggest "<title>" [--type T] [--slug S] [--pattern P]   branch name suggestions before the ticket exists
   list [--json]                         all tickets
   show <id>                             full resume context (plan, decisions, git, history)
   work [--json]                         what's in progress in the main checkout (branch, commits, changes)
@@ -24,7 +25,7 @@ const HELP = `board <command>
   resume [id] [--fix switch|recreate] [--print]   terminal alternative to /ticketboard:resume: starts Claude there
   prepare <id> [--fix switch|recreate] [--json]   where to work: existing worktree, or main checkout (switch only if clean)
   which                                 ticket for the current branch
-  set <id> key=value ...                title, type, priority, labels=a,b, column, description
+  set <id> key=value ...                title, type, priority, labels=a,b, column, description, slug (short name for branches)
   move <id> <column>
   plan <id> [--file F] [--source grill|imported] [--note N]   write plan (stdin if no --file)
   plan-status <id> <none|drafting|needs-validation|validated|tasks-ready|approved>
@@ -155,7 +156,7 @@ async function main() {
     }
     case 'new': {
       const plannedBranch = typeof flags.branch === 'string' ? flags.branch : null;
-      let t = b.create({ title: pos.join(' '), type: flags.type, description: flags.desc || '', priority: flags.priority || 'medium', plannedBranch });
+      let t = b.create({ title: pos.join(' '), type: flags.type, description: flags.desc || '', priority: flags.priority || 'medium', plannedBranch, slug: typeof flags.slug === 'string' ? flags.slug : null });
       let msg = `${t.id} created: ${t.title} [${t.type}]${plannedBranch ? `, planned branch ${plannedBranch}` : ''}`;
       if (flags.adopt) {
         out(msg);
@@ -173,9 +174,9 @@ async function main() {
       return;
     }
     case 'suggest': {
-      const o = b.branchOptionsDraft({ title: pos.join(' '), type: flags.type }, flags.pattern);
+      const o = b.branchOptionsDraft({ title: pos.join(' '), type: flags.type, slug: typeof flags.slug === 'string' ? flags.slug : undefined }, flags.pattern);
       if (flags.json) return out(o, true);
-      return out([`current: ${o.current || '(detached)'}`,
+      return out([`current: ${o.current || '(detached)'}`, `slug: ${o.slug}${o.customSlug ? ' (short name given)' : ' (from the title)'}`,
         ...o.options.map(x => `${x.isDefault ? '*' : ' '} ${x.name.padEnd(50)} ${x.pattern}${x.valid ? '' : '  INVALID'}${x.exists ? '  EXISTS' : ''}`),
         ...(o.preview ? [`  custom: ${o.preview}${o.previewValid ? '' : '  INVALID'}`] : [])].join('\n'));
     }
@@ -219,7 +220,7 @@ async function main() {
     case 'branches': {
       const o = b.branchOptions(pos[0], flags.type);
       if (flags.json) return out(o, true);
-      return out([`current: ${o.current || '(detached)'}`, `types: ${o.types.join(', ')}`,
+      return out([`current: ${o.current || '(detached)'}`, `slug: ${o.slug}${o.customSlug ? ' (short name given)' : ' (from the title)'}`, `types: ${o.types.join(', ')}`,
         ...o.options.map(x => `${x.planned || (x.isDefault && !o.options.some(y => y.planned)) ? '*' : ' '} ${x.name.padEnd(50)} ${x.planned ? '(planned)' : x.pattern}${x.valid ? '' : '  INVALID'}${x.exists ? '  EXISTS' : ''}`)].join('\n'));
     }
     case 'start': {

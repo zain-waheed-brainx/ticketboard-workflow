@@ -121,9 +121,9 @@ function routes(b) {
     ['GET', /^\/api\/tickets\/([\w-]+)\/versions\/([\w.-]+)$/, ([, id, name]) => ({ content: b.version(id, name) })],
     ['POST', /^\/api\/tickets\/([\w-]+)\/note$/, ([, id], body) => b.addSession(id, body.text || '', ACTOR)],
     ['POST', /^\/api\/tickets\/([\w-]+)\/share$/, ([, id], body) => b.share(id, body.on !== false, ACTOR)],
-    ['GET', /^\/api\/tickets\/([\w-]+)\/branches$/, ([, id], body, q) => b.branchOptions(id, q.get('type') || undefined, q.get('pattern'))],
+    ['GET', /^\/api\/tickets\/([\w-]+)\/branches$/, ([, id], body, q) => b.branchOptions(id, q.get('type') || undefined, q.get('pattern'), q.has('slug') ? q.get('slug') : undefined)],
     ['GET', /^\/api\/branch-preview$/, (m, body, q) =>
-      b.branchOptionsDraft({ title: q.get('title') || '', type: q.get('type') || undefined }, q.get('pattern'))],
+      b.branchOptionsDraft({ title: q.get('title') || '', type: q.get('type') || undefined, slug: q.get('slug') || undefined }, q.get('pattern'))],
     ['POST', /^\/api\/tickets\/([\w-]+)\/start$/, ([, id], body) => {
       if (body.savePattern) b.savePattern(body.savePattern, true);
       const t = b.start(id, { ...body, actor: ACTOR });

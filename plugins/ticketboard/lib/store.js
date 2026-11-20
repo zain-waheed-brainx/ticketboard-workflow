@@ -94,6 +94,45 @@ function slugify(s, max = 40) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '');
 }
 
+// Branch slugs: short and meaningful, never cut mid-word. Filler words are dropped, long words get their usual
+// short form, a leading generic verb goes (the branch type already says "feature"/"enhancement"), and words are
+// added whole until the limit. "Add the ability to search for users across all teams" -> "search-users-teams".
+const SLUG_FILLER = new Set(('a an the to for of and or in on at by with from into onto as is are be being been that this these those '
+  + 'it its we our us you your their ability able should can could will would need needs must so then also via all any some '
+  + 'each every when where which while across within without just only new feature enhancement ticket issue task '
+  + 'after before during about using').split(' '));
+const SLUG_LEADING_VERBS = new Set('add adds adding fix fixes implement create introduce allow enable support make build provide give'.split(' '));
+const SLUG_SHORT = {
+  authentication: 'auth', authenticate: 'auth', authorization: 'authz', configuration: 'config', configure: 'config',
+  application: 'app', applications: 'apps', administrator: 'admin', administrators: 'admins', administration: 'admin', information: 'info',
+  repository: 'repo', repositories: 'repos', environment: 'env', environments: 'envs', development: 'dev',
+  production: 'prod', database: 'db', documentation: 'docs', organization: 'org', organisation: 'org',
+  performance: 'perf', permission: 'perm', permissions: 'perms', statistics: 'stats', synchronization: 'sync',
+  synchronize: 'sync', synchronise: 'sync', notification: 'notif', notifications: 'notifs', management: 'mgmt',
+  dashboard: 'dash', description: 'desc', parameters: 'params', parameter: 'param', temporary: 'temp',
+  message: 'msg', messages: 'msgs', integration: 'integ', registration: 'signup', utilities: 'utils', utility: 'util'
+};
+function branchSlug(title, max = 40) {
+  const all = String(title).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(w => SLUG_SHORT[w] || w);
+  let words = all.filter(w => !SLUG_FILLER.has(w));
+  if (words.length > 1 && SLUG_LEADING_VERBS.has(words[0])) words = words.slice(1);
+  if (!words.length) words = all;
+  const out = [];
+  for (const w of words) {
+    if ([...out, w].join('-').length > max) break;
+    out.push(w);
+  }
+  return out.length ? out.join('-') : slugify(words[0] || 'untitled', max);
+}
+
+// A short name typed by you or suggested by Claude: lowercase words joined by '-', at most 50 characters.
+function cleanSlug(v) {
+  const words = slugify(v || '', 200).split('-').filter(Boolean);
+  const out = [];
+  for (const w of words) { if ([...out, w].join('-').length > 50) break; out.push(w); }
+  return out.length ? out.join('-') : (words[0] ? words[0].slice(0, 50) : null);
+}
+
 function readJSON(f, fallback) {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
 }
@@ -252,7 +291,7 @@ class Board {
       .split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   }
 
-  create({ title, type, description = '', priority = 'medium', labels = [], plannedBranch = null }, actor) {
+  create({ title, type, description = '', priority = 'medium', labels = [], plannedBranch = null, slug = null }, actor) {
     this.ensure();
     if (!title || !String(title).trim()) throw new Error('Title is required');
     if (plannedBranch && !this.validBranch(plannedBranch)) throw new Error(`Invalid branch name: ${plannedBranch}`);
@@ -268,7 +307,7 @@ class Board {
     const t = {
       id, title, type: type || c.branch.defaultType, description, priority, labels,
       column: 'backlog', planStatus: 'none', planSource: null,
-      plannedBranch, branch: null, baseBranch: null, worktree: null, shared: false, sharedPath: null,
+      plannedBranch, slug: cleanSlug(slug), branch: null, baseBranch: null, worktree: null, shared: false, sharedPath: null,
       sessions: [], created: now(), updated: now()
     };
     fs.mkdirSync(path.join(this.tdir(id), 'versions'), { recursive: true });
@@ -281,7 +320,8 @@ class Board {
 
   update(id, patch, actor) {
     const t = this.get(id);
-    const allowed = ['title', 'type', 'description', 'priority', 'labels', 'column', 'planStatus', 'baseBranch', 'plannedBranch'];
+    const allowed = ['title', 'type', 'description', 'priority', 'labels', 'column', 'planStatus', 'baseBranch', 'plannedBranch', 'slug'];
+    if (patch.slug !== undefined) patch = { ...patch, slug: cleanSlug(patch.slug) };
     if (patch.plannedBranch && !this.validBranch(patch.plannedBranch)) throw new Error(`Invalid branch name: ${patch.plannedBranch}`);
     if (patch.baseBranch) this.checkBase(patch.baseBranch);
     const changes = {};
@@ -678,16 +718,24 @@ class Board {
   branchName(t, { type, pattern } = {}) {
     const c = this.config();
     const user = slugify((tryGit(['config', 'user.name'], this.root) || 'me').split(' ')[0], 20);
-    const vals = { type: type || t.type, id: t.id.toLowerCase(), ID: t.id, slug: slugify(t.title), user, date: now().slice(0, 10) };
+    const vals = { type: type || t.type, id: t.id.toLowerCase(), ID: t.id, slug: this.slugFor(t), user, date: now().slice(0, 10) };
     return (pattern || c.branch.pattern).replace(/\{(\w+)\}/g, (m, k) => vals[k] ?? m);
   }
 
-  branchOptions(id, type, pattern) { return this.branchOptionsFor(this.get(id), type, pattern); }
+  // {slug}: the ticket's own short name when it has one (set by you or suggested by Claude), else a short
+  // meaningful slug made from the title.
+  slugFor(t) { return t.slug || branchSlug(t.title); }
+
+  // slug: a short name being typed in the Start dialog, previewed before it's saved on the ticket.
+  branchOptions(id, type, pattern, slug) {
+    const t = this.get(id);
+    return this.branchOptionsFor(slug !== undefined && slug !== null ? { ...t, slug: cleanSlug(slug) } : t, type, pattern);
+  }
 
   // Suggestions for a ticket that doesn't exist yet (the New ticket popup): uses the next id.
-  branchOptionsDraft({ title = '', type } = {}, pattern) {
+  branchOptionsDraft({ title = '', type, slug } = {}, pattern) {
     const c = this.config();
-    return this.branchOptionsFor({ id: `${c.idPrefix}-${c.nextId}`, title: title || 'untitled', type: type || c.branch.defaultType }, type, pattern);
+    return this.branchOptionsFor({ id: `${c.idPrefix}-${c.nextId}`, title: title || 'untitled', type: type || c.branch.defaultType, slug: cleanSlug(slug) }, type, pattern);
   }
 
   branchOptionsFor(t, type, pattern) {
@@ -701,7 +749,7 @@ class Board {
     };
     if (t.plannedBranch) add(t.plannedBranch, null, { planned: true });
     for (const p of [c.branch.pattern, ...c.branch.patterns]) add(this.branchName(t, { type, pattern: p }), p);
-    const o = { current: this.currentBranch(), types: c.branch.types, options };
+    const o = { current: this.currentBranch(), types: c.branch.types, options, slug: this.slugFor(t), autoSlug: branchSlug(t.title), customSlug: !!t.slug };
     if (pattern) {
       o.preview = pattern.includes('{') ? this.branchName(t, { type, pattern }) : pattern;
       o.previewValid = this.validBranch(o.preview);
