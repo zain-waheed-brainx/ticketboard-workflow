@@ -1249,6 +1249,7 @@ class Board {
       this.tasksSummary(t.id),
       this.roundsSummary(t.id),
       `\n## Grill-me decisions\n${this.grill(t.id).replace(/^# .*\n/, '').trim() || '(none)'}`,
+      this.prefsSummary(),
       sessions ? `\n## Session notes\n${sessions}` : '',
       gitInfo,
       projectInfo,
@@ -1562,6 +1563,17 @@ class Board {
     d.topics[k] = { question: question ? String(question).slice(0, 300) : cur.question || '', answers };
     writeJSON(f, d);
     return this.prefs().find(p => p.topic === k);
+  }
+
+  // For code, fixes and reviews in any worktree: the project's settled choices. Plan decisions win over these.
+  prefsSummary() {
+    const ps = this.prefs().filter(p => p.scope === 'project');
+    if (!ps.length) return '';
+    const tag = { apply: '', suggest: ' (recent, not settled)', ask: ' (varies by ticket)' };
+    const one = v => String(v).replace(/\s+/g, ' ').trim(); // keep each answer on its own line
+    return ['\n## Your preferences (follow in code, fixes and reviews; the plan wins if it differs.'
+      + ' Entries tagged "not settled" or "varies by ticket" are hints, not rules)',
+      ...ps.map(p => `- ${p.topic}: ${one(p.answer)}${tag[p.status]}`)].join('\n');
   }
 
   prefForget(topic) {

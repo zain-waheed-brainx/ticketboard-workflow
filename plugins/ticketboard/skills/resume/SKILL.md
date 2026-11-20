@@ -36,6 +36,7 @@ Every file edit and command for this ticket happens in the `worktree` path that 
 ## 4. Load the context
 Run `board show <id>`. Treat it as authoritative. It contains:
 - the plan and the grill-me decisions (including which ones were Claude's calls)
+- **Your preferences**: the user's usual choices. Follow them in any code or fix; the plan wins where it differs
 - session notes (the latest one says what's next)
 - commits and uncommitted changes
 - the project's dev and test commands: use those, don't guess

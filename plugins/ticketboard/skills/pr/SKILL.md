@@ -51,7 +51,7 @@ Reviewers' comments are **never changed without approval**, not even small ones.
    gh api repos/{owner}/{repo}/pulls/<n>/comments
    ```
    Skip comments that are resolved or already answered by a later commit.
-2. **Prepare a solution for each one, changing no files.** Read the code each comment points at and work out the fix. Also check it against the ticket's plan:
+2. **Prepare a solution for each one, changing no files.** Read the code each comment points at and work out the fix. Follow **Your preferences** from `board show <id>` in the fix. Also check it against the ticket's plan:
    - **Fits the plan:** a bug, a naming issue, or a missed edge case.
    - **Changes the plan:** new scope or a different decision. Mark it as such, since it may belong in a reopened round instead.
 3. **Ask for approval.** Show a numbered list: the comment (who, where, a short quote) and the proposed fix in one or two lines. Ask with AskUserQuestion (multiSelect) which fixes to apply. Options: **All of them**, individual items, or **None, I'll reply myself**. Comments that disagree with the plan get their own question first.

@@ -169,7 +169,7 @@ Examples:
 | Same answer twice in a row (or set in the board) | Doesn't ask. Uses it and lists it on one "Used your usual choices" screen: **Accept all** or **Change some** |
 | Changed back and forth | Always asks, since it depends on the ticket |
 
-So the first few tickets ask about as much as before, and later ones mostly ask about the ticket itself. Build, run and commit modes are remembered across all your projects; everything else stays per project. See and edit them in the board's settings (**Planning preferences**) or with `board prefs`.
+Build, fixes and reviews in every worktree follow your project preferences too: `board show` lists them, and the plan wins where it differs. So the first few tickets ask about as much as before, and later ones mostly ask about the ticket itself. Build, run and commit modes are remembered across all your projects; everything else stays per project. See and edit them in the board's settings (**Planning preferences**) or with `board prefs`.
 
 Plan format: Goal, Scope (in and out), Decisions (each with a one-line why), Approach, Risks, Done when.
 
