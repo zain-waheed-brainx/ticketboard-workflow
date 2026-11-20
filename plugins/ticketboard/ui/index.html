@@ -232,6 +232,9 @@ body.noscroll { overflow: hidden; }
   <label>Branch types <span class="hint">(branch names use the short key shown)</span></label>
   <div id="cTypes" class="hint"></div>
   <div style="display:flex;gap:6px;margin-top:6px"><input id="cNewType" style="flex:1" placeholder="release"><button id="cAddType">Add type</button></div>
+  <h3 style="margin-top:16px">Planning preferences</h3>
+  <p class="hint">Learned from your answers while planning. <b>Applied</b> ones aren't asked again (you see them once on the "usual choices" screen), <b>suggested</b> ones are asked with your last answer recommended, <b>asked</b> ones change too often to guess. Editing one here applies it from now on. <i>workflow.*</i> topics are shared by all your projects.</p>
+  <div id="cPrefs" class="hint">Loading…</div>
   <div class="err" id="cErr"></div>
   <div class="actions"><button data-close>Done</button></div>
 </div></div>
@@ -928,7 +931,32 @@ function renderSettings() {
   });
   document.querySelectorAll('input[name=cpat]').forEach(r => r.onchange = async () => { S.config = await api('PUT', '/api/config', { branch: { pattern: r.value } }); toast('Default pattern saved'); });
 }
-$('#btnSettings').onclick = () => { renderSettings(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
+const PREF_LABEL = { apply: 'applied', suggest: 'suggested', ask: 'asked' };
+async function renderPrefs() {
+  let ps;
+  try { ps = await api('GET', '/api/prefs'); } catch (e) { $('#cPrefs').textContent = e.message; return; }
+  $('#cPrefs').innerHTML = ps.length ? ps.map(p => `<div class="opt" style="display:flex;gap:8px;align-items:flex-start">
+    <div style="flex:1;min-width:0"><div><code>${esc(p.topic)}</code> <span class="hint">${PREF_LABEL[p.status]}${p.scope === 'global' ? ', all projects' : ''}</span></div>
+      <div style="color:var(--text)">${esc(p.answer)}</div>
+      <div class="sub">${esc(p.question)}${p.question ? ' · ' : ''}${p.uses} answer(s)${p.lastTicket ? `, last on ${esc(p.lastTicket)}` : ''}</div></div>
+    <button data-pedit="${esc(p.topic)}">Edit</button><button data-pforget="${esc(p.topic)}">Forget</button></div>`).join('')
+    : 'None yet. Planning remembers your answers to general questions (testing style, libraries, commit mode…).';
+}
+$('#cPrefs').onclick = async e => {
+  const ed = e.target.closest('[data-pedit]'), fg = e.target.closest('[data-pforget]');
+  try {
+    if (ed) {
+      const v = prompt(`New answer for ${ed.dataset.pedit} (applied from now on without asking):`);
+      if (!v || !v.trim()) return;
+      await api('PUT', `/api/prefs/${encodeURIComponent(ed.dataset.pedit)}`, { answer: v.trim() }); toast('Preference saved');
+    } else if (fg) {
+      if (!confirm(`Forget ${fg.dataset.pforget}? Planning will ask it again next time.`)) return;
+      await api('DELETE', `/api/prefs/${encodeURIComponent(fg.dataset.pforget)}`, {}); toast('Preference forgotten');
+    } else return;
+    $('#cErr').textContent = ''; renderPrefs();
+  } catch (err) { $('#cErr').textContent = err.message; }
+};
+$('#btnSettings').onclick = () => { renderSettings(); renderPrefs(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
 $('#cAddPattern').onclick = async () => {
   const p = $('#cNewPattern').value.trim();
   if (!p.includes('{')) return $('#cErr').textContent = 'A pattern needs at least one {token}';

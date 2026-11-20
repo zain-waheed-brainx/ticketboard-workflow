@@ -130,6 +130,10 @@ function routes(b) {
       return body.useCurrent ? t : setupInBackground(b, t);
     }],
     ['GET', /^\/api\/tickets\/([\w-]+)\/context$/, ([, id]) => ({ context: b.context(id) })],
+    ['GET', /^\/api\/prefs$/, () => b.prefs()],
+    // Typed in the board, so it's your explicit choice: applied from now on without asking.
+    ['PUT', /^\/api\/prefs\/([\w.-]+)$/, ([, topic], body) => b.prefRecord(topic, body.answer, { how: 'set' })],
+    ['DELETE', /^\/api\/prefs\/([\w.-]+)$/, ([, topic]) => b.prefForget(topic)],
     ['PUT', /^\/api\/config$/, (m, body) => {
       if (body.idPrefix !== undefined) return b.renamePrefix(body.idPrefix, { actor: ACTOR });
       if (body.mode !== undefined) return { ...b.setMode(body.mode), config: b.config() };

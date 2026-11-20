@@ -60,6 +60,10 @@ const HELP = `board <command>
   gh auto|off                           use GitHub CLI when installed (auto), or never (off, e.g. org doesn't allow it)
   cleanup <id> [--delete-branch]        after the PR is merged: remove the worktree, move to done (ticket + history stay)
   reopen <id> "<what QA/the client found>" [--type bugfix]   new round: plan section, tasks, branch, worktree, PR
+  prefs [--json]                        planning preferences learned from your answers (apply / suggest / ask)
+  pref <topic> "<answer>" [--q Q] [--ticket ID] [--how asked|confirmed|set]   remember an answer
+                                        workflow.* topics are shared by all your projects, others stay in this one
+  pref-forget <topic>                   forget a preference, so planning asks it again
   prefix [NEW]                          show the ticket ref prefix, or change it and rename every ticket (TIX-8 -> WWL-8)
   config [--json]
   serve [--port 4317]                   start the web board`;
@@ -317,6 +321,22 @@ async function main() {
       if (!r.pr) return out(`${b.resolveId(pos[0])}: no PR recorded`);
       return out(`${b.resolveId(pos[0])}: PR #${r.pr.number} ${r.pr.state}${r.pr.reviewDecision ? `, review: ${r.pr.reviewDecision.toLowerCase()}` : ''}${r.pr.url ? `\n${r.pr.url}` : ''}${r.gh === false ? `\n(${b.config().pr.gh === 'off' ? 'gh is off' : 'gh not installed'}: state is as last recorded; set it with board pr-state)` : ''}${r.error ? `\n(gh: ${r.error})` : ''}`);
     }
+    case 'prefs': {
+      const ps = b.prefs();
+      if (flags.json) return out(ps, true);
+      if (!ps.length) return out('No preferences yet. Planning remembers your answers to general questions.');
+      return out(ps.map(x => `${x.status.padEnd(7)} ${x.topic} = ${x.answer}  (${x.scope}, ${x.uses}x${x.lastTicket ? `, last ${x.lastTicket}` : ''})`).join('\n'));
+    }
+    case 'pref': {
+      if (!pos[0] || pos[1] === undefined) throw new Error('pref needs a topic and an answer: board pref tests.style "Feature tests"');
+      const x = b.prefRecord(pos[0], pos.slice(1).join(' '), {
+        question: typeof flags.q === 'string' ? flags.q : undefined,
+        ticket: typeof flags.ticket === 'string' ? flags.ticket : undefined,
+        how: typeof flags.how === 'string' ? flags.how : 'asked'
+      });
+      return out(`${x.topic} = ${x.answer} (${x.status})`);
+    }
+    case 'pref-forget': return out(`forgot ${b.prefForget(pos[0]).forgot}`);
     case 'prefix': {
       if (!pos[0]) return out(`ticket prefix: ${b.config().idPrefix} (e.g. ${b.config().idPrefix}-1)`);
       const r = b.renamePrefix(pos[0]);

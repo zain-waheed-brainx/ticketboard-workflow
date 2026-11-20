@@ -1492,6 +1492,89 @@ class Board {
     }), `Round ${t.round || 1} (now): ${t.reopenReason || ''}`].join('\n');
   }
 
+  // ---------- planning preferences ----------
+  // Answers to general questions ("validation in Form Request classes", "feature tests") are remembered per topic, so
+  // later plans reuse them instead of asking again. Topics starting with "workflow." (build/run/commit mode) are
+  // yours across every project (~/.ticketboard/preferences.json); the rest belong to this project (.board/).
+  // status: 'apply' when the last two answers agree (or you set it yourself), 'suggest' after one answer or a
+  // change, 'ask' when you keep changing it (no point guessing).
+  prefsFile(scope) {
+    return scope === 'global'
+      ? path.join(process.env.TICKETBOARD_HOME || path.join(require('os').homedir(), '.ticketboard'), 'preferences.json')
+      : path.join(this.dir, 'preferences.json');
+  }
+
+  static prefTopic(topic) {
+    const k = String(topic || '').trim().toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 60);
+    if (!k) throw new Error('A preference needs a topic, e.g. tests.style or workflow.commit-mode');
+    return k;
+  }
+
+  static prefScope(topic) { return topic.startsWith('workflow.') ? 'global' : 'project'; }
+
+  static prefStatus(answers) {
+    const last = answers[answers.length - 1];
+    if (!last) return 'ask';
+    if (last.how === 'set') return 'apply';
+    const recent = answers.slice(-4).map(x => x.a.toLowerCase());
+    let changes = 0;
+    for (let i = 1; i < recent.length; i++) if (recent[i] !== recent[i - 1]) changes++;
+    if (changes >= 2) return 'ask';
+    return answers.length >= 2 && recent[recent.length - 1] === recent[recent.length - 2] ? 'apply' : 'suggest';
+  }
+
+  prefsData(scope) {
+    const d = readJSON(this.prefsFile(scope), {});
+    return isObj(d) && isObj(d.topics) ? d : { topics: {} };
+  }
+
+  prefs() {
+    this.ensure();
+    const out = [];
+    for (const scope of ['project', 'global']) {
+      for (const [topic, p] of Object.entries(this.prefsData(scope).topics)) {
+        const answers = isObj(p) && Array.isArray(p.answers) ? p.answers.filter(x => x && typeof x.a === 'string') : [];
+        if (!answers.length || Board.prefScope(topic) !== scope) continue;
+        const last = answers[answers.length - 1];
+        out.push({ topic, scope, question: p.question || '', answer: last.a, status: Board.prefStatus(answers),
+          uses: answers.length, lastTicket: [...answers].reverse().find(x => x.ticket)?.ticket || null, updated: last.ts, history: answers });
+      }
+    }
+    return out.sort((a, b) => a.topic.localeCompare(b.topic));
+  }
+
+  // how: 'asked' (you answered the question), 'confirmed' (you accepted it on the "usual choices" screen),
+  // 'set' (you typed it in the board's settings or with board pref --how set).
+  prefRecord(topic, answer, { question, ticket, how = 'asked' } = {}) {
+    this.ensure();
+    const k = Board.prefTopic(topic);
+    if (typeof answer !== 'string' || !answer.trim()) throw new Error('A preference needs an answer (text)');
+    const a = answer.trim();
+    if (a.length > 300) throw new Error('Keep a preference answer under 300 characters');
+    if (!['asked', 'confirmed', 'set'].includes(how)) throw new Error('how must be asked, confirmed or set');
+    const scope = Board.prefScope(k);
+    const f = this.prefsFile(scope);
+    const d = this.prefsData(scope);
+    const cur = Object.prototype.hasOwnProperty.call(d.topics, k) && isObj(d.topics[k]) ? d.topics[k] : {};
+    // The global file is shared by every project, so it never keeps ticket refs (they'd show up in other clients' projects).
+    const ref = scope === 'project' && ticket ? { ticket: this.resolveId(ticket) } : {};
+    const answers = [...(Array.isArray(cur.answers) ? cur.answers : []), { a, how, ...ref, ts: now() }].slice(-8);
+    d.topics[k] = { question: question ? String(question).slice(0, 300) : cur.question || '', answers };
+    writeJSON(f, d);
+    return this.prefs().find(p => p.topic === k);
+  }
+
+  prefForget(topic) {
+    this.ensure();
+    const k = Board.prefTopic(topic);
+    const scope = Board.prefScope(k);
+    const d = this.prefsData(scope);
+    if (!Object.prototype.hasOwnProperty.call(d.topics, k)) throw new Error(`No preference called ${k}`);
+    delete d.topics[k];
+    writeJSON(this.prefsFile(scope), d);
+    return { forgot: k };
+  }
+
   // Changes whenever anything under .board changes; the UI polls this.
   rev() {
     let max = 0;

@@ -156,9 +156,20 @@ Examples:
 
 ### 2. Plan it
 `/ticketboard:ticket plan <id>` offers three ways to plan:
-- **Grill me (new plan).** Claude reads the ticket and the code, then asks one question at a time, with 2-4 concrete options and its recommendation first. Each answer is logged, and the plan document fills in live beside the questions on the board. If you answer "No preference", Claude takes the recommended option and marks it *(Claude's call)*.
+- **Grill me (new plan).** Claude reads the ticket and the code, then asks only what changes the plan: up to 4 related questions per screen, each with 2-4 concrete options and its recommendation first. Each answer is logged, and the plan document fills in live beside the questions on the board. If you answer "No preference", Claude takes the recommended option and marks it *(Claude's call)*. Small points become "Assumed: …" lines in the plan that you can edit.
 - **Validate an existing plan.** Paste it or give a file. Claude lists its gaps, risks and contradictions, then grills you only on those.
 - **Use an existing plan as is.**
+
+**Planning remembers your preferences.** Questions about this ticket (what it does, scope, edge cases) are always asked. General choices that repeat across tickets (testing style, where validation goes, commit mode…) are remembered per topic:
+
+| Your past answers | What planning does |
+|---|---|
+| None yet | Asks, with Claude's recommendation first |
+| Answered once, or just changed | Asks, with your last answer as the recommended option |
+| Same answer twice in a row (or set in the board) | Doesn't ask. Uses it and lists it on one "Used your usual choices" screen: **Accept all** or **Change some** |
+| Changed back and forth | Always asks, since it depends on the ticket |
+
+So the first few tickets ask about as much as before, and later ones mostly ask about the ticket itself. Build, run and commit modes are remembered across all your projects; everything else stays per project. See and edit them in the board's settings (**Planning preferences**) or with `board prefs`.
 
 Plan format: Goal, Scope (in and out), Decisions (each with a one-line why), Approach, Risks, Done when.
 
@@ -275,6 +286,7 @@ The board updates live while Claude works: it checks for changes every 1.5s.
 - **`<main checkout>/.board/`** is hidden from git. It holds tickets, plans, versions, grill-me logs, tasks, history and config.
 - Every worktree finds the same `.board/` through git's common directory. So deleting a worktree never loses ticket data, and one board covers all worktrees.
 - **The project profile** is `.board/project.json` in just-me mode, or the committed **`ticketboard.project.json`** in team mode.
+- **`~/.ticketboard/preferences.json`** holds your `workflow.*` planning preferences (build, run and commit modes), shared by all your projects. Set `TICKETBOARD_HOME` to keep it elsewhere.
 - **`docs/plans/<id>-<slug>.md`** (optional, committed): **Share plan** copies the plan there and keeps it in sync, so it can be reviewed in git.
 
 ```
@@ -283,6 +295,7 @@ The board updates live while Claude works: it checks for changes every 1.5s.
   project.json                project profile, in just-me mode
   trusted.json                which version of the profile you trusted
   deleted.jsonl               log of deleted tickets
+  preferences.json            planning preferences for this project
   tickets/WWL-8/
     ticket.json               fields, branch, worktree, PR, rounds
     plan.md                   current plan
@@ -377,7 +390,7 @@ The skills drive a small CLI, `board`, which is on PATH inside Claude sessions t
 |---|---|
 | Setup | `init [--mode me\|team]`, `mode [me\|team]`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `prefix [NEW]`, `config`, `serve [--port]` |
 | Tickets | `new`, `list`, `show <id>`, `set <id> k=v`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
-| Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a` |
+| Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a`, `prefs`, `pref <topic> "<answer>" [--how asked\|confirmed\|set]`, `pref-forget <topic>` |
 | Branches | `suggest "<title>"`, `branches <id>`, `start <id> [--branch\|--current] [--base]`, `pattern save`, `type add` |
 | Current work and resume | `work`, `adopt <id>`, `which`, `resumable`, `prepare <id> [--fix switch\|recreate]` |
 | Tasks and tests | `tasks <id>`, `tasks-write <id>`, `task <id> <T#> status=…`, `test <id> <T#> [--before]`, `test-all <id>`, `next <id>`, `build-mode`, `run-mode`, `commit-mode <id> per-task\|single\|none`, `commit-record <id> <sha>`, `done-when <id> <n>` |

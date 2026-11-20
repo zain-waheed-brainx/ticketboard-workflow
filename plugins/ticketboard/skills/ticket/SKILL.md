@@ -33,14 +33,29 @@ Ask with AskUserQuestion how to plan:
 2. **Validate an existing plan**: they give a file path or paste it. Save it with `board plan <id> --file <path> --source imported`, then grill only on the gaps.
 3. **Use an existing plan as is**: save it as in 2, then `board plan-status <id> validated` and go straight to the **tasks** step.
 
-**Grilling.** Interview the user about every part of the work until you both understand it the same way. Walk each branch of the design, one decision at a time, settling the decisions that others depend on first.
-- Before asking, read the ticket (`board show <id>`) and the relevant code. Never ask what the code or the ticket already answers.
-- Ask every question with AskUserQuestion, **one at a time**, with 2-4 concrete options specific to this work. Put the one you recommend first, marked "(Recommended)".
-- After each answer, log it with `board grill <id> --q "<question>" --a "<answer + one-line why>"`. The board shows it live.
-- Every 2-3 answers, and at the end, rewrite the plan with `board plan <id> --source grill --file <tmp file>` so the doc fills in beside the questions. Use a file in your scratchpad, not the repo.
-- When validating, first list the gaps, risks and contradictions you found in the imported plan in one short message. Grill only on those.
-- If they answer "No preference", take the recommended option, say so in the log answer, and mark it *(Claude's call)* in the plan. It is never approval.
-- Stop when nothing important about **what** is left open. Run `board plan-status <id> validated`, show a 5-line summary, then continue straight into the **tasks** step. Don't ask for approval yet: approval covers the plan and its tasks together.
+**Grilling.** Interview the user until you both understand the work the same way, settling the decisions that others depend on first. Keep it short: ask only what changes the plan, and reuse the user's past answers.
+
+1. **Prepare before asking.**
+   - Read the ticket (`board show <id>`) and the relevant code. Never ask what the code, the ticket or an earlier round already answers (test framework, folder layout, existing patterns).
+   - Run `board prefs --json` once. These are the user's answers from earlier plans, per topic, each with a `status`.
+2. **Sort every open question into one of three kinds.**
+   - **Ticket facts:** what this ticket does, its scope, edge cases, data, behaviour. Always ask these. Never fill them from a preference.
+   - **Preferences:** general choices that repeat across tickets, e.g. `tests.style`, `validation.place`, `ui.feedback`, `api.errors`, `migrations.style`. Look the topic up:
+     - `apply`: don't ask. Use the answer and put it on the usual-choices screen (step 5).
+     - `suggest`: ask, with that answer as the first option, marked "(Recommended, your last answer)".
+     - `ask`, or no topic yet: ask normally, recommended option first.
+   - **Minor points** that don't change the plan: don't ask. Write them in the plan as "Assumed: …" lines the user can edit.
+3. **Budget.** About 3 questions for a small ticket, about 6 for a medium one; more only for a big or risky one. Ask with AskUserQuestion, up to 4 related questions per call (each with 2-4 concrete options, recommended first). A question whose options depend on an earlier answer waits for that answer.
+4. **Log and remember.** After each answer:
+   - `board grill <id> --q "<question>" --a "<answer + one-line why>"`;
+   - if it was a preference: `board pref <topic> "<answer>" --q "<question>" --ticket <id>`. Reuse an existing topic name when it's the same question; make a new one as `area.thing` in lowercase.
+   - Every 2-3 answers, and at the end, rewrite the plan with `board plan <id> --source grill --file <tmp file>` (a file in your scratchpad, not the repo).
+5. **Usual choices screen.** If any `apply` preferences were used, show them all at once at the end of grilling, as a numbered list: "Used your usual choices: 1. tests.style: Feature tests …". Ask with AskUserQuestion: **Accept all** (Recommended) or **Change some** (then ask only about the ones they pick, as normal questions).
+   - Accepted: `board pref <topic> "<same answer>" --how confirmed --ticket <id>` for each, and log them in one `board grill` entry ("From your preferences: …").
+   - Changed: record the new answer with `board pref` (plain, `--how asked`). The board then suggests it next time instead of applying it, until it's given twice in a row.
+6. **When validating** an imported plan, first list its gaps, risks and contradictions in one short message, then grill only on those, the same way.
+7. If they answer "No preference", take the recommended option, say so in the log answer, mark it *(Claude's call)* in the plan, and don't record it with `board pref`. It is never approval.
+8. Stop when nothing important about **what** is left open. Run `board plan-status <id> validated`, show a 5-line summary, then continue straight into the **tasks** step. Don't ask for approval yet: approval covers the plan and its tasks together.
 
 **Plan format.** Keep it short. A builder should be able to work from it a month from now with no other context:
 ```
@@ -70,14 +85,15 @@ This step works out **how** the plan gets built, after grilling and before appro
    - If the project has no test runner yet, the first task sets one up (with its own smoke test). Every later task depends on it.
 3. **Merge.**
    - **Shared files:** tasks that touch the same files (or the same folder with wildcards) must run in sequence, so add a dependency between them. Mark the rest `parallel: true` only if they have no dependency on each other and no shared files.
-   - **New decisions** a subagent or you ran into, i.e. anything that changes **what** gets built (a migration, a new library, an API shape): ask the user grill-style (one AskUserQuestion at a time, recommended option first) and log it with `board grill`. Never decide these silently.
-   - **Unclear parallel or sequence cases:** ask one at a time, e.g. "T3 and T4 both touch `routes.ts`: run them in sequence (Recommended) or in parallel?" When in doubt, choose sequence and set `claudesCall: true`.
-   - **Build mode:** ask near the end. **One task at a time** (Recommended, cheapest) or **Independent tasks in parallel** (subagents; more tokens).
-   - **Run mode:** **Task by task** (Recommended: build pauses after each task so you can check or stop) or **All in one go** (build runs to the end and stops only on a failure or an open decision).
-   - **Commit mode:** ask last.
-     - **One commit per task** (Recommended): small, reviewable commits, and finished work is safe in git between sessions.
-     - **One commit for the whole ticket:** a single clean commit at the end. Until then, finished tasks only exist as uncommitted changes in the worktree, and the repo's commit hooks run once instead of per task.
-     - **No commits, I commit myself:** Claude never commits. At the end it stages only the ticket's files, reviews them, and hands over a suggested commit message. Recommend this when the repo's tools generate files that would get committed with the work, e.g. a commit hook that stages everything. Until they commit, the work exists only in the worktree.
+   - **New decisions** a subagent or you ran into, i.e. anything that changes **what** gets built (a migration, a new library, an API shape): ask the user grill-style (batched in one AskUserQuestion call where they're independent, recommended option first, preferences applied as in grilling) and log it with `board grill`. Never decide these silently.
+   - **Unclear parallel or sequence cases:** ask them together, e.g. "T3 and T4 both touch `routes.ts`: run them in sequence (Recommended) or in parallel?" When in doubt, choose sequence and set `claudesCall: true`.
+   - **Build, run and commit modes** are preferences shared by all the user's projects: `workflow.build-mode`, `workflow.run-mode`, `workflow.commit-mode` in `board prefs --json`. Treat them like step 2 of grilling: `apply` means use it without asking (list it with the approval in step 5), `suggest` means ask with it recommended, otherwise ask with the defaults below. Ask the open ones together in one AskUserQuestion call, and record each answer with `board pref workflow.<mode> "<answer>" --ticket <id>`.
+     - **Build mode:** **One task at a time** (Recommended, cheapest) or **Independent tasks in parallel** (subagents; more tokens).
+     - **Run mode:** **Task by task** (Recommended: build pauses after each task so you can check or stop) or **All in one go** (build runs to the end and stops only on a failure or an open decision).
+     - **Commit mode:**
+       - **One commit per task** (Recommended): small, reviewable commits, and finished work is safe in git between sessions.
+       - **One commit for the whole ticket:** a single clean commit at the end. Until then, finished tasks only exist as uncommitted changes in the worktree, and the repo's commit hooks run once instead of per task.
+       - **No commits, I commit myself:** Claude never commits. At the end it stages only the ticket's files, reviews them, and hands over a suggested commit message. Recommend this when the repo's tools generate files that would get committed with the work, e.g. a commit hook that stages everything. Until they commit, the work exists only in the worktree.
 4. **Save.** Write JSON to a scratchpad file and run `board tasks-write <id> --file <file>`. This sets the plan to `tasks-ready`. `doneWhen` comes from the plan's "Done when" section.
    ```json
    {
@@ -102,7 +118,7 @@ This step works out **how** the plan gets built, after grilling and before appro
      "doneWhen": ["A user with audit:export can download a CSV + checksum", "..."]
    }
    ```
-5. **Approve.** Show the task list (id, title, after, parallel, test command), the build mode, run mode and commit mode in one short message. Ask: **Approve plan and tasks** (Recommended), **Change a task**, or **Re-split**. On approve, run `board plan-status <id> approved` and offer `/ticketboard:build <id>`. They can also approve with the **Approve plan** button on the board.
+5. **Approve.** Show the task list (id, title, after, parallel, test command), the build mode, run mode and commit mode in one short message, marking the modes taken from preferences "(your usual)". Approving the plan counts as accepting them: record each with `board pref workflow.<mode> "<answer>" --how confirmed --ticket <id>`. If they change one, record the new answer plainly. Ask: **Approve plan and tasks** (Recommended), **Change a task**, or **Re-split**. On approve, run `board plan-status <id> approved` and offer `/ticketboard:build <id>`. They can also approve with the **Approve plan** button on the board.
 
 ## start <id>
 1. Run `board branches <id>`. It shows the current branch and the name options; a name saved at creation is listed first as "(planned)".
