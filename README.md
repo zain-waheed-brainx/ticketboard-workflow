@@ -96,11 +96,24 @@ What it does:
    - which ignored files (like `.env`) each worktree needs;
    - the setup commands (like `npm ci`);
    - the base branch.
-3. **Confirms with you.** It asks one question at a time, only about what it couldn't tell, including whether the team can use `gh`.
-4. **Writes `ticketboard.project.json`** and trusts it on your machine.
-5. **Creates `.board/`** and adds it to `.gitignore`.
+3. **Asks: just me or team?** (see below). Just me is the default.
+4. **Confirms with you.** It asks one question at a time, only about what it couldn't tell, including the ticket initials and whether the team can use `gh`.
+5. **Writes the project profile** and trusts it on your machine.
+6. **Creates `.board/`** and hides it from git.
 
-**Commit `ticketboard.project.json`** so teammates get the same setup. When a teammate runs `/ticketboard:setup`, it reads the committed file, shows what it will run, and asks them to trust it.
+### Just me or team
+
+| | **Just me** (default) | **Team** |
+|---|---|---|
+| Project profile | `.board/project.json`, local only | `ticketboard.project.json`, committed |
+| Hiding `.board/` | `.git/info/exclude` (local, never committed) | `.gitignore` (committed) |
+| Shared plans (`docs/plans/`) | Off | On, committed to share |
+| What teammates see | Nothing: the repo doesn't change | The profile, so their setup is one confirmation |
+
+- **Switch** with `board mode me|team`, or under **Who uses it** in the board's settings.
+- **Going to team:** the profile moves into the repo; commit it and the `.gitignore` line.
+- **Going to just me:** anything never committed moves out of the repo. Anything already committed stays, and you're told how to remove it.
+- **Team repos:** when a teammate runs `/ticketboard:setup` in a repo with a committed profile, it uses team mode, shows what the profile will run, and asks them to trust it.
 
 > **Trust.** The profile contains commands that run on your machine (setup, dev, test, build, lint). They only run once you've trusted the profile. If someone changes those commands, they stop running until you review them again: run `board project trust` or `/ticketboard:setup`.
 
@@ -110,7 +123,7 @@ What it does:
 
 | Command | What it does |
 |---|---|
-| `/ticketboard:setup` | Set up a repo: detect, confirm, write and trust `ticketboard.project.json` |
+| `/ticketboard:setup` | Set up a repo: just me or team, detect, confirm, write and trust the project profile |
 | `/ticketboard:board` | Start the web board (port 4317) and open it |
 | `/ticketboard:ticket` | Everything about a ticket: `new`, `plan`, `tasks`, `start`, `reopen`, `share`, `edit`, `delete` (and `resume`, which hands over to the resume skill) |
 | `/ticketboard:build <id>` | Build an approved ticket task by task in its worktree: test first, two reviews, then commit |
@@ -259,14 +272,15 @@ The board updates live while Claude works: it checks for changes every 1.5s.
 ## How it works
 
 ### Where data lives
-- **`<main checkout>/.board/`** is gitignored. It holds tickets, plans, versions, grill-me logs, tasks, history and config.
+- **`<main checkout>/.board/`** is hidden from git. It holds tickets, plans, versions, grill-me logs, tasks, history and config.
 - Every worktree finds the same `.board/` through git's common directory. So deleting a worktree never loses ticket data, and one board covers all worktrees.
-- **`ticketboard.project.json`** (committed) is the team's project profile.
+- **The project profile** is `.board/project.json` in just-me mode, or the committed **`ticketboard.project.json`** in team mode.
 - **`docs/plans/<id>-<slug>.md`** (optional, committed): **Share plan** copies the plan there and keeps it in sync, so it can be reviewed in git.
 
 ```
 .board/
-  config.json                 personal settings (patterns, gh mode, next id)
+  config.json                 personal settings (mode, ticket prefix, patterns, gh mode, next id)
+  project.json                project profile, in just-me mode
   trusted.json                which version of the profile you trusted
   deleted.jsonl               log of deleted tickets
   tickets/WWL-8/
@@ -315,7 +329,7 @@ Worktrees are created at `../<repo>.worktrees/<branch>` by default. Branches are
 
 ## Configuration
 
-### `ticketboard.project.json` (team, committed)
+### Project profile (`.board/project.json`, or `ticketboard.project.json` in team mode)
 ```json
 {
   "version": 1,
@@ -361,7 +375,7 @@ The skills drive a small CLI, `board`, which is on PATH inside Claude sessions t
 
 | Area | Commands |
 |---|---|
-| Setup | `init`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `prefix [NEW]`, `config`, `serve [--port]` |
+| Setup | `init [--mode me\|team]`, `mode [me\|team]`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `prefix [NEW]`, `config`, `serve [--port]` |
 | Tickets | `new`, `list`, `show <id>`, `set <id> k=v`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
 | Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a` |
 | Branches | `suggest "<title>"`, `branches <id>`, `start <id> [--branch\|--current] [--base]`, `pattern save`, `type add` |

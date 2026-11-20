@@ -8,7 +8,7 @@ argument-hint: "[new|plan|tasks|start|resume|reopen|share|edit|delete] [ticket i
 
 All state goes through the `board` CLI (the plugin's `bin/` is on PATH; if `board` is not found, use `<this skill's base directory>/../../bin/board`). It works from the main checkout or any worktree and always reads the same `.board/` folder. Never edit `.board/` files by hand. Run `board help` if you need a flag.
 
-If `board list` says there is no board, run `board init`, then continue. If the repo has no `ticketboard.project.json`, mention once that `/ticketboard:setup` makes new worktrees ready to run, but don't block on it.
+If `board list` says there is no board, run `board init`, then continue. If `board project show` finds no project profile, mention once that `/ticketboard:setup` makes new worktrees ready to run, but don't block on it.
 
 Pick the action from the arguments. With none: if `board which` names a ticket, run **resume**. Otherwise show `board list` and ask what to do with AskUserQuestion.
 
@@ -109,7 +109,7 @@ This step works out **how** the plan gets built, after grilling and before appro
 2. Ask with AskUserQuestion: **New branch** (Recommended) or **Use current branch `<name>`**. If `board work --json` reports `hasWork` and no `owner`, also offer **Move my current work into a worktree** (and recommend it), then run `board adopt <id>` (with `--branch <name>` when on the base branch) and skip steps 3-4.
 3. For a new branch, ask a second question with up to 4 options: the generated names (default first), with "Other" for a custom name or a custom `{token}` pattern. If they wrote a custom pattern, ask whether to save it as the default (`board pattern save "<pattern>"`). If they want a branch type that isn't listed (e.g. `release`), run `board type add <name>`.
 4. Run `board start <id> --branch <name>` (add `--no-worktree` only if they asked to skip the worktree), or `board start <id> --current`.
-5. `board start` also runs worktree setup from `ticketboard.project.json`: it copies files, writes launch.json and runs install. Run it in the background if it may take more than about 2 minutes. If setup failed, show the failing command and the end of the log, help fix it, then run `board bootstrap <id>`.
+5. `board start` also runs worktree setup from the project profile: it copies files, writes launch.json and runs install. Run it in the background if it may take more than about 2 minutes. If setup failed, show the failing command and the end of the log, help fix it, then run `board bootstrap <id>`.
 6. Tell them the worktree path. The work belongs in that worktree. To work on it now or later, in this chat or any other, they type `/ticketboard:resume <id>`.
 
 If the plan isn't `approved`, say so once before starting, but don't block.
@@ -132,6 +132,7 @@ For a ticket whose PR is merged (or that is done) when QA finds a bug or the cli
    - **tasks**, approve, **start** (a new worktree on the new branch), then `/ticketboard:build`, then `/ticketboard:pr`.
 
 ## share <id>
+Shared plans go into the repo, so they're for team mode only: in just-me mode `board share` refuses and says to switch with `board mode team`.
 `board share <id>` copies the plan to `docs/plans/<id>-<slug>.md` (tracked by git) and keeps it synced on every plan save. Tell them to commit that file to share it. `board share <id> --off` stops syncing.
 
 ## delete <id>

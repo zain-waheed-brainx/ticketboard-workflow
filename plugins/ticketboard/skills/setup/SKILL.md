@@ -11,7 +11,13 @@ Use the `board` CLI (the plugin's `bin/` is on PATH; if `board` isn't found, use
 Run `board doctor`. Report anything marked ✗ in one line each, with the install command for macOS (Homebrew) or a link. Stop only if `git` or `node` is missing, since the board needs both. Anything else is a warning. If it says the folder is **not a git repository**, explain that tickets use git worktrees. Ask whether to run `git init` (with a first commit) or point at the real clone, and don't continue until it is a repo.
 
 ## 2. Profile
-Run `board project show`.
+**Just me or team?**
+- **A teammate already committed `ticketboard.project.json`:** it's a team repo. Use team mode, without asking.
+- **Otherwise ask** with AskUserQuestion:
+  - **Just me** (Recommended): nothing in the repo changes. The profile stays in `.board/project.json`, `.board/` is hidden through `.git/info/exclude`, and shared plans are off.
+  - **Team**: the profile is `ticketboard.project.json`, committed with the `.gitignore` line so teammates get the same setup and initials.
+
+Run `board init --mode <me|team>`, then `board project show`. To switch later, use `board mode me|team` or the board's settings.
 
 **A teammate already committed `ticketboard.project.json`:** summarize it in 4-6 lines (stack, dev command and port, test command, files copied into worktrees, worktree setup commands). These commands run on your machine every time work starts, so ask with AskUserQuestion: **Looks right, trust it** (Recommended), **Change something**, or **Re-detect**. On trust, run `board init` (if needed), then `board project trust`, then go to step 4.
 
@@ -63,14 +69,12 @@ Write the final profile to a scratchpad JSON file using this shape:
   "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{slug}" }
 }
 ```
-Always include `idPrefix`. Include `branch` only if they want the team to share it, and `"pr": { "gh": "off" }` only if the team can't use gh. Personal settings still override both locally (`board gh auto|off`).
+Always include `idPrefix`. Include `branch` only if they want to share it with the team, and `"pr": { "gh": "off" }` only if the team can't use gh. Personal settings still override both locally (`board gh auto|off`).
 
-Then run:
-1. `board init`
-2. `board project write --file <that file>` (this also trusts it)
+Then run `board project write --file <that file>`. It writes the profile where the mode keeps it (`.board/project.json` for just me, `ticketboard.project.json` for team) and trusts it.
 
 ## 4. Ready
 1. Run `board doctor` again if the profile added tools.
-2. Tell them to commit `ticketboard.project.json` (and the `.gitignore` change that hides `.board/`) so teammates get the same setup. Don't commit it yourself unless they ask.
+2. **Team:** tell them to commit `ticketboard.project.json` and the `.gitignore` change that hides `.board/`, so teammates get the same setup. Don't commit it yourself unless they ask. **Just me:** say nothing in the repo changed (`git status` is untouched), and that `board mode team` shares it later.
 3. Say what happens from now on: **Start work** creates the branch and worktree, copies the files, writes `.claude/launch.json` and runs the setup commands. Output goes to the ticket's **Setup** tab, and they can re-run it with `board bootstrap <id>`.
 4. Offer to open the board (`/ticketboard:board`) or create the first ticket (`/ticketboard:ticket new`).

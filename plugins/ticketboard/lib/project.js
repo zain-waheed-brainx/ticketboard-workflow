@@ -18,12 +18,19 @@ function tryRun(cmd, args, cwd) {
   try { return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).trim(); } catch { return null; }
 }
 
-function load(root) { return readJSON(path.join(root, FILE)); }
+// The profile lives at <root>/ticketboard.project.json (team) or .board/project.json (just me); the board picks
+// the file, these read and write it.
+function loadFile(f) { return readJSON(f); }
 
-function save(root, profile) {
-  fs.writeFileSync(path.join(root, FILE), JSON.stringify(profile, null, 2) + '\n');
-  return path.join(root, FILE);
+function saveFile(f, profile) {
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify(profile, null, 2) + '\n');
+  return f;
 }
+
+function load(root) { return loadFile(path.join(root, FILE)); }
+
+function save(root, profile) { return saveFile(path.join(root, FILE), profile); }
 
 // Every part that runs commands (setup, dev, test, build, lint); trusting is per machine (.board/trusted.json).
 function commandHash(profile) {
@@ -233,4 +240,4 @@ function doctor(tools = ['git']) {
   return res;
 }
 
-module.exports = { FILE, load, save, detect, toProfile, doctor, commandHash };
+module.exports = { FILE, load, save, loadFile, saveFile, detect, toProfile, doctor, commandHash };

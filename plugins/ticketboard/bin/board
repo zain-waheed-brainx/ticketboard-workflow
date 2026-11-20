@@ -7,10 +7,11 @@ const project = require('../lib/project');
 
 const HELP = `board <command>
 
-  init                                  create .board/ (gitignored) in the main checkout
+  init [--mode me|team]                 create .board/ in the main checkout (me: hidden locally; team: .gitignore)
+  mode [me|team]                        just me (nothing in the repo) or team (committed profile); switches and moves files
   doctor [--json]                       check the tools this project needs
   detect [--json] [--root DIR]          propose a project profile from the repo's files (writes nothing)
-  project [show|write [--file F]|trust] ticketboard.project.json: show, write (and trust), or trust as-is
+  project [show|write [--file F]|trust] project profile (.board/project.json, or ticketboard.project.json in team mode)
   bootstrap <id>                        (re)run worktree setup: copy files, launch.json, setup commands
   new "<title>" [--type T] [--desc D] [--priority P] [--slug S] [--branch B] [--start | --current] [--no-worktree]
                                         --slug: short name for {slug} in branch names (else made from the title)
@@ -140,7 +141,8 @@ async function main() {
       if (flags.json) return out({ ...d, isGit }, true);
       return out(printDetect(d));
     }
-    const p = project.load(root);
+    let p = null;
+    try { p = isGit ? new Board(cwd).profile() : null; } catch { p = null; }
     const rows = project.doctor(p?.tools || project.detect(root).tools);
     if (flags.json) return out(rows, true);
     out(printDoctor(rows) + (isGit ? '' : '\n✗ repo      not a git repository (worktrees need git)'));
@@ -152,8 +154,14 @@ async function main() {
 
   switch (cmd) {
     case 'init': {
-      const root = b.init();
-      return out(`Board ready at ${path.join(root, '.board')} (added to .gitignore)`);
+      const root = b.init({ mode: typeof flags.mode === 'string' ? flags.mode : undefined });
+      const m = b.mode();
+      return out(`Board ready at ${path.join(root, '.board')} (${m === 'me' ? 'just me: hidden through .git/info/exclude, nothing in the repo changes' : 'team: .board/ added to .gitignore'})`);
+    }
+    case 'mode': {
+      if (!pos[0]) return out(`mode: ${b.mode() === 'me' ? 'me (just me: nothing in the repo; profile in ' : 'team (profile in '}${b.profileName()})`);
+      const r = b.setMode(pos[0]);
+      return out([`mode: ${r.mode}${r.from === r.mode ? ' (unchanged)' : ` (was ${r.from})`}`, ...r.notes.map(n => `- ${n}`)].join('\n'));
     }
     case 'new': {
       const plannedBranch = typeof flags.branch === 'string' ? flags.branch : null;
@@ -419,14 +427,14 @@ async function main() {
       const sub = pos[0] || 'show';
       if (sub === 'show') {
         const p = b.profile();
-        if (!p) return out(`No ${project.FILE}. Run /ticketboard:setup (or board detect).`);
+        if (!p) return out(`No project profile (${b.profileName()}). Run /ticketboard:setup (or board detect).`);
         return out(flags.json ? p : `${JSON.stringify(p, null, 2)}\ntrusted on this machine: ${b.trusted() ? 'yes' : 'NO (board project trust)'}`, flags.json);
       }
       if (sub === 'write') {
         let profile = flags.file ? JSON.parse(fs.readFileSync(flags.file, 'utf8')) : project.toProfile(project.detect(b.root));
         if (profile.evidence) profile = project.toProfile(profile); // accept raw detect output too
         const f = b.saveProfile(profile);
-        return out(`Wrote ${path.relative(b.root, f)}${b.initialized ? ' (trusted)' : ''}. Commit it so teammates get the same setup.`);
+        return out(`Wrote ${path.relative(b.root, f)}${b.initialized ? ' (trusted)' : ''}.${b.mode() === 'team' ? ' Commit it so teammates get the same setup.' : ' Just me: it stays out of the repo.'}`);
       }
       if (sub === 'trust') { b.trust(); return out('Trusted: worktree setup commands will run on start'); }
       throw new Error('Usage: board project [show|write [--file F]|trust]');

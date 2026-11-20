@@ -137,6 +137,7 @@ function projectInitials(root) {
 }
 
 const ID_PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
+const MODES = ['me', 'team'];
 
 // A short name typed by you or suggested by Claude: lowercase words joined by '-', at most 50 characters.
 function cleanSlug(v) {
@@ -183,16 +184,95 @@ class Board {
     if (!this.initialized) throw new Error(`No board in ${this.root}. Run: board init`);
   }
 
-  init() {
+  // mode: 'me' (just me: nothing in the repo changes; the profile lives in .board/ and .board/ is hidden through
+  // .git/info/exclude) or 'team' (the profile is the committed ticketboard.project.json, .board/ is in .gitignore).
+  init({ mode } = {}) {
     fs.mkdirSync(path.join(this.dir, 'tickets'), { recursive: true });
-    // Local config holds only personal overrides; team defaults come from ticketboard.project.json.
-    if (!this.initialized) writeJSON(path.join(this.dir, 'config.json'), { idPrefix: this.defaultPrefix(), nextId: 1 });
-    const gi = path.join(this.root, '.gitignore');
-    const cur = readText(gi);
-    if (!/^\/?\.board\/?$/m.test(cur)) {
-      fs.writeFileSync(gi, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + '.board/\n');
-    }
+    const m = MODES.includes(mode) ? mode : this.mode();
+    if (!this.initialized) writeJSON(path.join(this.dir, 'config.json'), { mode: m, idPrefix: this.defaultPrefix(), nextId: 1 });
+    this.hideBoard(m);
     return this.root;
+  }
+
+  // ---------- just me / team ----------
+  // Saved in .board/config.json. A board from before modes existed counts as 'team' when the repo already has a
+  // ticketboard.project.json, else 'me'.
+  mode() {
+    const m = readJSON(path.join(this.dir, 'config.json'), {}).mode;
+    if (MODES.includes(m)) return m;
+    return fs.existsSync(path.join(this.root, project.FILE)) ? 'team' : 'me';
+  }
+
+  profileName() { return path.relative(this.root, this.profilePath()); }
+
+  profilePath(mode = this.mode()) {
+    return mode === 'team' ? path.join(this.root, project.FILE) : path.join(this.dir, 'project.json');
+  }
+
+  // --git-path works on any git that has worktrees (no --path-format, which needs git 2.31+).
+  excludeFile() {
+    return path.resolve(this.root, git(['rev-parse', '--git-path', 'info/exclude'], this.root));
+  }
+
+  // Hide .board/ from git: .git/info/exclude (local, never committed) for 'me', .gitignore for 'team'.
+  hideBoard(mode) {
+    const f = mode === 'team' ? path.join(this.root, '.gitignore') : this.excludeFile();
+    const cur = readText(f);
+    if (/^\/?\.board\/?$/m.test(cur)) return false;
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + '.board/\n');
+    return true;
+  }
+
+  // Is this file (or this exact line of it) in the last commit? Committed things are never removed without asking.
+  // Tracked at all (committed, or staged with git add)?
+  tracked(file) { return tryGit(['ls-files', '--error-unmatch', '--', file], this.root) !== null || this.committed(file); }
+
+  committed(file, line) {
+    const head = tryGit(['show', `HEAD:${file}`], this.root);
+    if (head === null) return false;
+    return line === undefined || head.split('\n').some(l => l.trim() === line);
+  }
+
+  // Switch between just me and team. Never deletes anything that's committed: it reports what to remove instead.
+  setMode(mode) {
+    if (!MODES.includes(mode)) throw new Error('Mode must be me (just me) or team');
+    const from = this.mode();
+    const notes = [];
+    const repoFile = path.join(this.root, project.FILE), localFile = path.join(this.dir, 'project.json');
+    if (mode === 'team') {
+      if (fs.existsSync(localFile) && !fs.existsSync(repoFile)) {
+        fs.renameSync(localFile, repoFile);
+        notes.push(`moved the project profile to ${project.FILE}: commit it so teammates get the same setup`);
+      } else if (fs.existsSync(localFile)) {
+        notes.push(`kept the existing ${project.FILE} (your local profile is in ${path.relative(this.root, localFile)})`);
+      }
+      if (this.hideBoard('team')) notes.push('added .board/ to .gitignore: commit it');
+    } else {
+      if (fs.existsSync(repoFile)) {
+        if (!fs.existsSync(localFile)) fs.copyFileSync(repoFile, localFile);
+        // Only remove the repo copy when it's untracked and .board/ now holds exactly the same profile.
+        const same = readText(repoFile) === readText(localFile);
+        if (this.tracked(project.FILE)) notes.push(`${project.FILE} is tracked by git, so it's left in place; remove it with git rm if the team doesn't use it`);
+        else if (!same) notes.push(`${project.FILE} differs from your profile in .board/, so it's left in place; just-me mode uses .board/project.json`);
+        else { fs.unlinkSync(repoFile); notes.push(`moved ${project.FILE} into .board/ (it was never committed)`); }
+      }
+      this.hideBoard('me');
+      const gi = path.join(this.root, '.gitignore');
+      const cur = readText(gi);
+      if (/^\/?\.board\/?$/m.test(cur)) {
+        if (this.tracked('.gitignore') && this.committed('.gitignore', cur.split('\n').find(l => /^\/?\.board\/?$/.test(l.trim())).trim())) {
+          notes.push('the .board/ line in .gitignore is committed, so it stays; .board/ is now also hidden through .git/info/exclude');
+        } else {
+          const rest = cur.split('\n').filter(l => !/^\/?\.board\/?$/.test(l.trim())).join('\n');
+          if (!rest.trim() && !this.committed('.gitignore')) fs.unlinkSync(gi);
+          else fs.writeFileSync(gi, rest.replace(/\n*$/, '\n'));
+          notes.push('moved the .board/ line from .gitignore to .git/info/exclude (it was never committed)');
+        }
+      }
+    }
+    this.saveConfig({ mode });
+    return { mode, from, notes };
   }
 
   // ---------- config ----------
@@ -206,6 +286,7 @@ class Board {
     return {
       ...DEFAULT_CONFIG, ...(p.worktreeDir ? { worktreeDir: p.worktreeDir } : {}), ...local,
       idPrefix: local.idPrefix || this.defaultPrefix(),
+      mode: this.mode(),
       branch,
       pr: normPr({ ...DEFAULT_CONFIG.pr, ...(isObj(p.pr) ? p.pr : {}), ...(isObj(local.pr) ? local.pr : {}) })
     };
@@ -233,7 +314,7 @@ class Board {
   }
 
   // ---------- project profile (ticketboard.project.json) ----------
-  profile() { return project.load(this.root); }
+  profile() { return project.loadFile(this.profilePath()) || null; }
 
   trusted() {
     const p = this.profile();
@@ -242,12 +323,12 @@ class Board {
 
   trust() {
     const p = this.profile();
-    if (!p) throw new Error(`No ${project.FILE} to trust`);
+    if (!p) throw new Error(`No project profile (${this.profileName()}) to trust: run /ticketboard:setup`);
     writeJSON(path.join(this.dir, 'trusted.json'), { hash: project.commandHash(p), ts: now() });
   }
 
   saveProfile(profile) {
-    const f = project.save(this.root, profile);
+    const f = project.saveFile(this.profilePath(), profile);
     if (this.initialized) this.trust(); // you just reviewed and wrote it
     return f;
   }
@@ -636,7 +717,7 @@ class Board {
       results.push({ taskId: x.id, passed: r.passed, code: r.code, ms: r.ms, output: r.passed ? '' : r.output });
     }
     const projectCmd = this.profile()?.commands?.test;
-    const projectFile = require('./project').FILE;
+    const projectFile = this.profileName();
     let project = null;
     if (projectCmd && !this.trusted()) {
       project = { command: projectCmd, passed: false, skipped: `not run: ${projectFile} changed since you last reviewed it; run board project trust (or /ticketboard:setup)` };
@@ -764,6 +845,7 @@ class Board {
 
   share(id, on = true, actor) {
     const t = this.get(id);
+    if (on && this.mode() === 'me') throw new Error('Shared plans go into the repo (docs/plans/), so they are a team feature. Switch to team mode first: board mode team');
     if (on) {
       t.shared = true;
       t.sharedPath = path.relative(this.root, this.syncShared(t));
@@ -909,9 +991,9 @@ class Board {
     const t = this.get(id);
     const p = this.profile();
     const wt = t.worktree;
-    if (!p) return { skipped: `no ${project.FILE} (run /ticketboard:setup)` };
+    if (!p) return { skipped: `no project profile (run /ticketboard:setup)` };
     if (!wt || path.resolve(wt) === path.resolve(this.root)) return { skipped: 'ticket uses the main checkout' };
-    if (!this.trusted()) return { skipped: `${project.FILE} changed since you last reviewed it; run board project trust (or /ticketboard:setup)` };
+    if (!this.trusted()) return { skipped: `${this.profileName()} changed since you last reviewed it; run board project trust (or /ticketboard:setup)` };
     const logFile = path.join(this.tdir(t.id), 'bootstrap.log');
     const write = s => { fs.appendFileSync(logFile, s); if (onOutput) onOutput(s); };
     fs.writeFileSync(logFile, `# bootstrap ${t.id} ${now()}\n`);
@@ -1148,7 +1230,7 @@ class Board {
     }
     const sessions = t.sessions.slice(-10).map(s => `- ${s.ts.slice(0, 16)} ${s.note}`).join('\n');
     const p = this.profile();
-    const projectInfo = p ? [`\n## Project (${project.FILE})`,
+    const projectInfo = p ? [`\n## Project (${this.profileName()})`,
       ...(p.commands?.dev || []).map(d => `dev: ${d.command}${d.port ? ` (port ${d.port})` : ''}`),
       p.commands?.test ? `test: ${p.commands.test}` : '', p.commands?.build ? `build: ${p.commands.build}` : '',
       t.bootstrap ? `worktree setup: ${t.bootstrap.status}${t.bootstrap.command ? ` at "${t.bootstrap.command}"` : ''}` : ''

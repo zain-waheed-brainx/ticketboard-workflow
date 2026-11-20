@@ -218,7 +218,10 @@ body.noscroll { overflow: hidden; }
 </div></div>
 
 <div class="modal" id="mSettings"><div class="mbox">
-  <h3>Ticket refs</h3>
+  <h3>Who uses it</h3>
+  <label class="opt"><input type="radio" name="cmode" value="me"><div><div>Just me</div><div class="sub">Nothing in the repo changes: the project profile stays in .board/ and .board/ is hidden locally. Shared plans are off.</div></div></label>
+  <label class="opt"><input type="radio" name="cmode" value="team"><div><div>Team</div><div class="sub">The project profile is ticketboard.project.json, committed so teammates get the same setup and initials.</div></div></label>
+  <h3 style="margin-top:16px">Ticket refs</h3>
   <p class="hint">Tickets are numbered with the project's initials, e.g. <code>WWL-8</code>. Changing it renames every existing ticket (old refs still work).</p>
   <div style="display:flex;gap:6px"><input id="cPrefix" style="flex:1" maxlength="10" autocomplete="off"><button id="cSavePrefix">Rename tickets</button></div>
   <h3 style="margin-top:16px">Branch naming</h3>
@@ -302,7 +305,7 @@ async function load() {
   banner.style.display = S.project.exists && S.project.trusted ? 'none' : '';
   banner.innerHTML = !S.project.exists
     ? '⚠ Project not set up: new worktrees won\'t get dependencies or .env. In Claude, run <code>/ticketboard:setup</code>.'
-    : '⚠ <code>ticketboard.project.json</code> changed since you last reviewed it, so worktree setup is paused. Run <code>/ticketboard:setup</code> to review it.';
+    : '⚠ The project profile changed since you last reviewed it, so worktree setup is paused. Run <code>/ticketboard:setup</code> to review it.';
   $('#repo').textContent = S.root;
   renderBoard();
   if (open) await loadTicket(open, true);
@@ -378,6 +381,7 @@ async function loadTicket(id, quiet) {
   $('#dStart').textContent = t.branch ? 'Change branch' : 'Start work';
   $('#dResume').style.display = t.branch ? '' : 'none';
   $('#dShare').textContent = t.shared ? 'Unshare plan' : 'Share plan';
+  $('#dShare').style.display = S.config.mode === 'me' && !t.shared ? 'none' : '';
   $('#dShare').title = t.shared ? `Synced to ${t.sharedPath}` : 'Copy the plan to docs/plans/ (tracked by git) and keep it synced';
   $('#planSrc').textContent = t.planSource ? `from ${t.planSource}` : '';
   // Approve appears once the tasks exist (tasks-ready); before that the header points at the tasks step.
@@ -508,7 +512,7 @@ function renderSide() {
       const st = status ? `<b style="color:${status.status === 'done' ? 'var(--ok)' : status.status === 'failed' ? 'var(--danger)' : 'var(--warn)'}">${esc(status.status)}</b> ${when(status.ts)}${status.command ? ` at <code>${esc(status.command)}</code>` : ''}` : 'Not run yet';
       const canRun = t.worktree && t.branch && S.project.exists;
       side.innerHTML = `<p>Worktree setup: ${st} ${canRun && status?.status !== 'running' ? '<button id="reBoot">Run setup again</button>' : ''}</p>
-        <p class="hint">Copies ignored files (like .env), writes .claude/launch.json and runs the setup commands from ticketboard.project.json.</p>
+        <p class="hint">Copies ignored files (like .env), writes .claude/launch.json and runs the setup commands from the project profile.</p>
         ${log ? `<pre style="white-space:pre-wrap;font-size:11px;background:var(--panel2);padding:8px;border-radius:6px;max-height:60vh;overflow:auto">${esc(log.slice(-20000))}</pre>` : ''}`;
       const rb = $('#reBoot');
       if (rb) rb.onclick = async () => { await api('POST', `/api/tickets/${open}/bootstrap`); toast('Setup started'); setTimeout(renderSide, 800); };
@@ -911,6 +915,17 @@ function renderSettings() {
     : `<label class="opt"><input type="radio" name="cpat" value="${esc(p)}" ${p === b.pattern ? 'checked' : ''}><div class="name">${esc(p)}</div></label>`).join('');
   $('#cTypes').innerHTML = b.types.map(t => `${typeChip(t)}${b.typeKeys?.[t] ? ` <code>${esc(b.typeKeys[t])}/</code>` : ` <code>${esc(t)}/</code>`}`).join(' &nbsp; ');
   if (document.activeElement !== $('#cPrefix')) $('#cPrefix').value = S.config.idPrefix;
+  document.querySelectorAll('input[name=cmode]').forEach(r => {
+    r.checked = r.value === S.config.mode;
+    r.onchange = async () => {
+      const msg = r.value === 'team'
+        ? 'Switch to team? The project profile moves into the repo as ticketboard.project.json and .board/ is added to .gitignore. Commit both to share them.'
+        : 'Switch to just me? The project profile moves into .board/ and .board/ is hidden locally. Anything already committed stays in place.';
+      if (!confirm(msg)) { renderSettings(); return; }
+      try { const res = await api('PUT', '/api/config', { mode: r.value }); S.config = res.config; toast(res.notes.join('. ') || `Mode: ${res.mode}`); await load(); } catch (e) { $('#cErr').textContent = e.message; }
+      renderSettings();
+    };
+  });
   document.querySelectorAll('input[name=cpat]').forEach(r => r.onchange = async () => { S.config = await api('PUT', '/api/config', { branch: { pattern: r.value } }); toast('Default pattern saved'); });
 }
 $('#btnSettings').onclick = () => { renderSettings(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
