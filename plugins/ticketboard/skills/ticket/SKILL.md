@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: Work a ticketboard ticket end to end - create it, plan it with grill-me (or import and validate an existing plan), start it on a named branch in a git worktree, reopen a merged ticket for QA or client changes, share, edit or delete it. Use for "/ticket", "new ticket", "plan TIX-3", "start TIX-3", or any request about a ticket on the board. For picking work back up, /ticketboard:resume is the direct command.
+description: Work a ticketboard ticket end to end - create it, plan it with grill-me (or import and validate an existing plan), start it on a named branch in a git worktree, reopen a merged ticket for QA or client changes, share, edit or delete it. Use for "/ticket", "new ticket", "plan WWL-3", "start WWL-3", or any request about a ticket on the board. For picking work back up, /ticketboard:resume is the direct command.
 argument-hint: "[new|plan|tasks|start|resume|reopen|share|edit|delete] [ticket id] [title or notes]"
 ---
 

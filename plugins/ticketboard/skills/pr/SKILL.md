@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open the pull request for a built ticketboard ticket, handle reviewers' comments, and clean up after the merge. It pushes the branch, writes a minimal PR description and opens the PR with gh once you confirm. For review comments, it reads them, prepares a fix for each one, and changes nothing until you approve. After the merge it removes the worktree and keeps the ticket and its history, so QA or client changes can reopen it. Use for "/pr", "open a PR for TIX-8", "handle the PR comments", "the PR is merged".
+description: Open the pull request for a built ticketboard ticket, handle reviewers' comments, and clean up after the merge. It pushes the branch, writes a minimal PR description and opens the PR with gh once you confirm. For review comments, it reads them, prepares a fix for each one, and changes nothing until you approve. After the merge it removes the worktree and keeps the ticket and its history, so QA or client changes can reopen it. Use for "/pr", "open a PR for WWL-8", "handle the PR comments", "the PR is merged".
 argument-hint: "[ticket id] [open|comments|merged]"
 ---
 

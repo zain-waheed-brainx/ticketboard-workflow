@@ -39,6 +39,7 @@ Then ask one question at a time with AskUserQuestion, and only about what's stil
 - Copy the real `.env`, or create it from `.env.example`?
 - Which base branch?
 - Should the team share these branch types and naming pattern?
+- **Ticket ref initials** (always ask, even with a committed profile when it has no `idPrefix`): tickets are numbered like `WWL-8`. Suggest the repo's initials (`board prefix` shows the current value; e.g. `wrm-web-laravel-10` → `WWL`), with 1-2 alternatives, and let them type their own. Save it in the profile as `idPrefix`. If the board already has tickets under another prefix (such as the old default `TIX`), say that they'll be renamed (`TIX-8` → `WWL-8`; branch names and history stay as they are, and old refs keep working). Then run `board prefix <initials>`.
 - Can the team use GitHub CLI (`gh`) for pull requests? Options: **Use gh when installed** (Recommended), or **No gh, use the browser** (e.g. the org doesn't allow it). For "no gh", add `"pr": { "gh": "off" }` to the profile.
 
 Finish with: **Save this setup** (Recommended) or **Change something**.
@@ -58,10 +59,11 @@ Write the final profile to a scratchpad JSON file using this shape:
     "lint": null
   },
   "worktree": { "copyFiles": [".env"], "setup": ["npm ci"], "launch": true },
-  "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{id}-{slug}" }
+  "idPrefix": "WWL",
+  "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{slug}" }
 }
 ```
-Include `branch` only if they want the team to share it, and `"pr": { "gh": "off" }` only if the team can't use gh. Personal settings still override both locally (`board gh auto|off`).
+Always include `idPrefix`. Include `branch` only if they want the team to share it, and `"pr": { "gh": "off" }` only if the team can't use gh. Personal settings still override both locally (`board gh auto|off`).
 
 Then run:
 1. `board init`

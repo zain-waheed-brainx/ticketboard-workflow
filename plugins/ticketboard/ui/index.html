@@ -218,12 +218,15 @@ body.noscroll { overflow: hidden; }
 </div></div>
 
 <div class="modal" id="mSettings"><div class="mbox">
-  <h3>Branch naming</h3>
-  <p class="hint">The default pattern is used when you start work. Tokens: <code>{type}</code> <code>{id}</code> <code>{ID}</code> <code>{slug}</code> <code>{user}</code> <code>{date}</code></p>
+  <h3>Ticket refs</h3>
+  <p class="hint">Tickets are numbered with the project's initials, e.g. <code>WWL-8</code>. Changing it renames every existing ticket (old refs still work).</p>
+  <div style="display:flex;gap:6px"><input id="cPrefix" style="flex:1" maxlength="10" autocomplete="off"><button id="cSavePrefix">Rename tickets</button></div>
+  <h3 style="margin-top:16px">Branch naming</h3>
+  <p class="hint">The default pattern is used when you start work. Suggestions leave out the ticket ref. Tokens: <code>{type}</code> <code>{slug}</code> <code>{user}</code> <code>{date}</code>, plus <code>{id}</code> <code>{ID}</code> in a custom pattern.</p>
   <div id="cPatterns"></div>
   <label>Add pattern</label>
   <div style="display:flex;gap:6px"><input id="cNewPattern" style="flex:1" placeholder="{type}/{user}/{slug}"><button id="cAddPattern">Add as default</button></div>
-  <label>Branch types</label>
+  <label>Branch types <span class="hint">(branch names use the short key shown)</span></label>
   <div id="cTypes" class="hint"></div>
   <div style="display:flex;gap:6px;margin-top:6px"><input id="cNewType" style="flex:1" placeholder="release"><button id="cAddType">Add type</button></div>
   <div class="err" id="cErr"></div>
@@ -670,7 +673,7 @@ $('#dDelete').onclick = async () => {
   $('#xGo').textContent = c.safe ? 'Delete' : 'Force delete';
   $('#xGo').disabled = false;
 };
-// Accepts "TIX-16", "tix-16" or "16" for ticket TIX-16.
+// Accepts "WWL-16", "wwl-16" or "16" for ticket WWL-16.
 const confirmMatches = () => {
   const v = $('#xConfirm').value.trim().toUpperCase();
   return !!v && (v === open || v === open.split('-').pop());
@@ -901,8 +904,13 @@ $('#dBuild').onclick = () => openClaudeBuild(openData.ticket);
 
 function renderSettings() {
   const b = S.config.branch;
-  $('#cPatterns').innerHTML = b.patterns.map(p => `<label class="opt"><input type="radio" name="cpat" value="${esc(p)}" ${p === b.pattern ? 'checked' : ''}><div class="name">${esc(p)}</div></label>`).join('');
-  $('#cTypes').innerHTML = b.types.map(typeChip).join(' ');
+  // Patterns with the ticket ref are never suggested, so they can't be the default either: shown as custom only.
+  const hasRef = p => /\{(id|ID)\}/.test(p);
+  $('#cPatterns').innerHTML = b.patterns.map(p => hasRef(p)
+    ? `<label class="opt" style="opacity:.6" title="Has the ticket ref: type it as a custom name to use it"><input type="radio" disabled><div class="name">${esc(p)} <span class="hint">custom only (has the ticket ref)</span></div></label>`
+    : `<label class="opt"><input type="radio" name="cpat" value="${esc(p)}" ${p === b.pattern ? 'checked' : ''}><div class="name">${esc(p)}</div></label>`).join('');
+  $('#cTypes').innerHTML = b.types.map(t => `${typeChip(t)}${b.typeKeys?.[t] ? ` <code>${esc(b.typeKeys[t])}/</code>` : ` <code>${esc(t)}/</code>`}`).join(' &nbsp; ');
+  if (document.activeElement !== $('#cPrefix')) $('#cPrefix').value = S.config.idPrefix;
   document.querySelectorAll('input[name=cpat]').forEach(r => r.onchange = async () => { S.config = await api('PUT', '/api/config', { branch: { pattern: r.value } }); toast('Default pattern saved'); });
 }
 $('#btnSettings').onclick = () => { renderSettings(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
@@ -910,6 +918,16 @@ $('#cAddPattern').onclick = async () => {
   const p = $('#cNewPattern').value.trim();
   if (!p.includes('{')) return $('#cErr').textContent = 'A pattern needs at least one {token}';
   S.config = await api('PUT', '/api/config', { savePattern: p }); $('#cNewPattern').value = ''; renderSettings();
+};
+$('#cSavePrefix').onclick = async () => {
+  const v = $('#cPrefix').value.trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9]{0,9}$/.test(v)) return $('#cErr').textContent = 'Use 1-10 letters or digits, starting with a letter (e.g. WWL)';
+  if (v === S.config.idPrefix) return;
+  if (!confirm(`Rename every ticket from ${S.config.idPrefix}-n to ${v}-n? Branch names and history stay as they are, and old refs keep working.`)) return;
+  try {
+    const r = await api('PUT', '/api/config', { idPrefix: v });
+    toast(`Renamed ${r.renamed.length} ticket(s) to ${v}`); $('#cErr').textContent = ''; await load(); renderSettings();
+  } catch (e) { $('#cErr').textContent = e.message; }
 };
 $('#cAddType').onclick = async () => {
   const t = $('#cNewType').value.trim().toLowerCase();

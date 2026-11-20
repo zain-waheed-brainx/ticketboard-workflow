@@ -7,14 +7,17 @@ const { execFileSync, spawn } = require('child_process');
 const project = require('./project');
 
 const DEFAULT_CONFIG = {
-  idPrefix: 'TIX',
+  // idPrefix: the project's initials (asked during setup, changeable with `board prefix`); see projectInitials.
   nextId: 1,
   columns: ['backlog', 'planning', 'ready', 'in-progress', 'review', 'done'],
   branch: {
     types: ['feature', 'hotfix', 'enhancement', 'bugfix', 'chore'],
     defaultType: 'feature',
-    pattern: '{type}/{id}-{slug}',
-    patterns: ['{type}/{id}-{slug}', '{type}/{slug}', '{type}/{user}/{id}-{slug}', '{id}-{slug}'],
+    // Suggested branch names never carry the ticket ref: {id}/{ID} only appear in a custom pattern you type.
+    pattern: '{type}/{slug}',
+    patterns: ['{type}/{slug}', '{type}/{user}/{slug}', '{type}/{date}-{slug}'],
+    // {type} in branch names uses these short keys; types not listed keep their full name.
+    typeKeys: { enhancement: 'enh', bugfix: 'fix' },
     base: '' // empty = the branch checked out in the main checkout
   },
   worktreeDir: '../{repo}.worktrees/{branchSafe}',
@@ -125,6 +128,16 @@ function branchSlug(title, max = 40) {
   return out.length ? out.join('-') : slugify(words[0] || 'untitled', max);
 }
 
+// Default ticket ref prefix from the repo folder: the first letter of each word, e.g. wrm-web-laravel-10 -> WWL,
+// demo-repo -> DR. A single word gives its first three letters (ticketboard -> TIC).
+function projectInitials(root) {
+  const words = path.basename(root).split(/[^A-Za-z]+|(?<=[a-z])(?=[A-Z])/).filter(Boolean);
+  const v = words.length > 1 ? words.map(w => w[0]).join('') : (words[0] || 'T').slice(0, 3);
+  return v.toUpperCase().slice(0, 6);
+}
+
+const ID_PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
+
 // A short name typed by you or suggested by Claude: lowercase words joined by '-', at most 50 characters.
 function cleanSlug(v) {
   const words = slugify(v || '', 200).split('-').filter(Boolean);
@@ -173,7 +186,7 @@ class Board {
   init() {
     fs.mkdirSync(path.join(this.dir, 'tickets'), { recursive: true });
     // Local config holds only personal overrides; team defaults come from ticketboard.project.json.
-    if (!this.initialized) writeJSON(path.join(this.dir, 'config.json'), { idPrefix: DEFAULT_CONFIG.idPrefix, nextId: 1 });
+    if (!this.initialized) writeJSON(path.join(this.dir, 'config.json'), { idPrefix: this.defaultPrefix(), nextId: 1 });
     const gi = path.join(this.root, '.gitignore');
     const cur = readText(gi);
     if (!/^\/?\.board\/?$/m.test(cur)) {
@@ -188,9 +201,12 @@ class Board {
     const local = this.localConfig();
     const p = this.profile() || {};
     const team = { ...(p.branch || {}), ...(p.baseBranch ? { base: p.baseBranch } : {}) };
+    const branch = { ...DEFAULT_CONFIG.branch, ...team, ...(local.branch || {}) };
+    branch.typeKeys = { ...DEFAULT_CONFIG.branch.typeKeys, ...(isObj(team.typeKeys) ? team.typeKeys : {}), ...(isObj(local.branch?.typeKeys) ? local.branch.typeKeys : {}) };
     return {
       ...DEFAULT_CONFIG, ...(p.worktreeDir ? { worktreeDir: p.worktreeDir } : {}), ...local,
-      branch: { ...DEFAULT_CONFIG.branch, ...team, ...(local.branch || {}) },
+      idPrefix: local.idPrefix || this.defaultPrefix(),
+      branch,
       pr: normPr({ ...DEFAULT_CONFIG.pr, ...(isObj(p.pr) ? p.pr : {}), ...(isObj(local.pr) ? local.pr : {}) })
     };
   }
@@ -264,11 +280,58 @@ class Board {
     return t;
   }
 
+  // The team profile's prefix if it has one, else the repo's initials.
+  defaultPrefix() {
+    const p = this.profile();
+    return p && typeof p.idPrefix === 'string' && ID_PREFIX_RE.test(p.idPrefix) ? p.idPrefix : projectInitials(this.root);
+  }
+
+  // Refs typed with an old prefix (after `board prefix`) still find the renamed ticket: TIX-8 -> WWL-8.
   resolveId(id) {
     if (!id) throw new Error('Ticket id required');
     const c = this.config();
     const up = String(id).toUpperCase();
-    return /^\d+$/.test(up) ? `${c.idPrefix}-${up}` : up;
+    if (/^\d+$/.test(up)) return `${c.idPrefix}-${up}`;
+    const m = up.match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
+    if (m && m[1] !== c.idPrefix && (c.oldPrefixes || []).includes(m[1]) && !fs.existsSync(this.tdir(up))) return `${c.idPrefix}-${m[2]}`;
+    return up;
+  }
+
+  // Change the ticket ref prefix and rename every existing ticket to it (TIX-8 -> WWL-8): folder, id, grill-me
+  // log title and shared plan file. Branch names, worktrees and history stay as they are.
+  renamePrefix(prefix, { actor } = {}) {
+    const next = String(prefix || '').trim().toUpperCase();
+    if (!ID_PREFIX_RE.test(next)) throw new Error('Prefix must be 1-10 letters or digits, starting with a letter (e.g. WWL)');
+    const c = this.config();
+    if (next === c.idPrefix) return { prefix: next, renamed: [] };
+    const moves = this.ids().map(id => ({ from: id, to: `${next}-${id.split('-').pop()}` })).filter(m => m.from !== m.to);
+    for (const m of moves) {
+      if (fs.existsSync(this.tdir(m.to))) throw new Error(`Can't rename ${m.from}: ${m.to} already exists`);
+    }
+    // Config first: if a rename fails midway, new tickets already use the new prefix, old refs still resolve,
+    // and running it again renames the rest.
+    this.saveConfig({ idPrefix: next, oldPrefixes: [...new Set([...(c.oldPrefixes || []), c.idPrefix])].filter(x => x !== next) });
+    const renamed = [];
+    for (const m of moves) {
+      const t = readJSON(path.join(this.tdir(m.from), 'ticket.json'), null);
+      if (!t) continue;
+      const oldShared = t.shared ? this.sharedFile(t) : null;
+      fs.renameSync(this.tdir(m.from), this.tdir(m.to));
+      t.id = m.to;
+      const g = path.join(this.tdir(m.to), 'grill.md');
+      const gt = readText(g);
+      if (gt) fs.writeFileSync(g, gt.replace(new RegExp(`^(# Grill-me log: )${m.from}\\b`), `$1${m.to}`));
+      if (oldShared && fs.existsSync(oldShared)) {
+        const nf = this.sharedFile(t);
+        fs.renameSync(oldShared, nf);
+        t.sharedPath = path.relative(this.root, nf);
+      }
+      this.save(t);
+      this.log(m.to, 'renamed', { from: m.from, to: m.to }, actor);
+      if (t.shared) this.syncShared(t);
+      renamed.push(m);
+    }
+    return { prefix: next, renamed };
   }
 
   list() { return this.ids().map(id => this.get(id)); }
@@ -715,11 +778,19 @@ class Board {
   // ---------- branches + worktrees ----------
   currentBranch(cwd = this.root) { return tryGit(['branch', '--show-current'], cwd) || null; }
 
+  // The pattern used when none is given: the default, unless it carries the ticket ref ({id}/{ID}), which only a
+  // typed custom name may use. Same rule as the suggestions, so the default name is always the recommended one.
+  defaultPattern(c = this.config()) {
+    return [c.branch.pattern, ...c.branch.patterns].find(p => !/\{(id|ID)\}/.test(p)) || DEFAULT_CONFIG.branch.pattern;
+  }
+
   branchName(t, { type, pattern } = {}) {
     const c = this.config();
+    pattern = pattern || this.defaultPattern(c);
     const user = slugify((tryGit(['config', 'user.name'], this.root) || 'me').split(' ')[0], 20);
-    const vals = { type: type || t.type, id: t.id.toLowerCase(), ID: t.id, slug: this.slugFor(t), user, date: now().slice(0, 10) };
-    return (pattern || c.branch.pattern).replace(/\{(\w+)\}/g, (m, k) => vals[k] ?? m);
+    const ty = type || t.type;
+    const vals = { type: c.branch.typeKeys[ty] || ty, id: t.id.toLowerCase(), ID: t.id, slug: this.slugFor(t), user, date: now().slice(0, 10) };
+    return pattern.replace(/\{(\w+)\}/g, (m, k) => vals[k] ?? m);
   }
 
   // {slug}: the ticket's own short name when it has one (set by you or suggested by Claude), else a short
@@ -742,13 +813,17 @@ class Board {
     const c = this.config();
     const seen = new Set();
     const options = [];
+    // Suggestions never include the ticket ref; a saved pattern with {id}/{ID} is only used when typed as custom.
+    const noRef = p => !/\{(id|ID)\}/.test(p);
+    const def = this.defaultPattern(c);
+    const pats = [def, ...[c.branch.pattern, ...c.branch.patterns].filter(p => noRef(p) && p !== def)];
     const add = (name, p, extra = {}) => {
       if (!name || seen.has(name)) return;
       seen.add(name);
-      options.push({ pattern: p, name, isDefault: p === c.branch.pattern, valid: this.validBranch(name), exists: this.branchExists(name), ...extra });
+      options.push({ pattern: p, name, isDefault: p === pats[0], valid: this.validBranch(name), exists: this.branchExists(name), ...extra });
     };
     if (t.plannedBranch) add(t.plannedBranch, null, { planned: true });
-    for (const p of [c.branch.pattern, ...c.branch.patterns]) add(this.branchName(t, { type, pattern: p }), p);
+    for (const p of pats) add(this.branchName(t, { type, pattern: p }), p);
     const o = { current: this.currentBranch(), types: c.branch.types, options, slug: this.slugFor(t), autoSlug: branchSlug(t.title), customSlug: !!t.slug };
     if (pattern) {
       o.preview = pattern.includes('{') ? this.branchName(t, { type, pattern }) : pattern;
@@ -804,6 +879,10 @@ class Board {
       if (!this.validBranch(branch)) throw new Error(`Invalid branch name: ${branch}`);
       base = base || c.branch.base || this.currentBranch(this.root) || 'HEAD';
       const exists = this.branchExists(branch);
+      // Branch names carry no ticket ref, so two tickets can produce the same name: never reuse another ticket's.
+      // A finished ticket whose branch was cleaned up doesn't hold the name any more.
+      const owner = this.list().find(o => o.id !== t.id && o.branch === branch && (exists || o.column !== 'done'));
+      if (owner) throw new Error(`Branch ${branch} belongs to ${owner.id}. Pick another name, e.g. give this ticket a different short name`);
       if (!exists) this.checkBase(base);
       if (worktree) {
         const wt = this.worktreePath(t, branch);

@@ -1,6 +1,6 @@
 ---
 name: build
-description: Build an approved ticketboard ticket task by task in its worktree. Runs each task from its spec, tests it, reviews it against the ticket and then for code quality, commits it (one commit per task, one for the whole ticket, or none so you commit yourself, as chosen), and ticks it off; independent tasks run in parallel subagents when the ticket's build mode says so. Runs task by task (pausing after each) or all in one go, as chosen; you can stop and resume later. Use for "/build", "build TIX-8", "start coding the ticket", "do the next task".
+description: Build an approved ticketboard ticket task by task in its worktree. Runs each task from its spec, tests it, reviews it against the ticket and then for code quality, commits it (one commit per task, one for the whole ticket, or none so you commit yourself, as chosen), and ticks it off; independent tasks run in parallel subagents when the ticket's build mode says so. Runs task by task (pausing after each) or all in one go, as chosen; you can stop and resume later. Use for "/build", "build WWL-8", "start coding the ticket", "do the next task".
 argument-hint: "[ticket id] [all|step]"
 ---
 
@@ -58,7 +58,7 @@ Repeat until `board next <id> --json` reports `allDone`.
        3. reading the diff for bugs against the task's spec.
      - Fix what the review finds and re-run the task's test (`board test <id> <T#>`) after any fix.
    - **A blocked commit didn't happen.** If a hook blocks the commit, fix the findings (or resolve them the way the hook asks), re-stage and commit again. Repeat until the commit goes through. If you can't resolve a finding, stop and ask.
-   - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket id and the task (e.g. `<wt> TIX-8 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the ticket id in the subject. Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<id> <T#>: <task title>`.
+   - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket id and the task (e.g. `<wt> WWL-8 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the ticket id in the subject. Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<id> <T#>: <task title>`.
    - **Record only the commit that went through:** take the sha with `git -C <wt> rev-parse HEAD` right after a successful commit in the worktree. The board refuses a sha that isn't on the ticket's branch or that the base branch already has.
    - **`per-task`:** commit each task on its own, then record it.
      ```

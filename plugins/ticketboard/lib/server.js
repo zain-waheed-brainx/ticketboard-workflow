@@ -131,6 +131,7 @@ function routes(b) {
     }],
     ['GET', /^\/api\/tickets\/([\w-]+)\/context$/, ([, id]) => ({ context: b.context(id) })],
     ['PUT', /^\/api\/config$/, (m, body) => {
+      if (body.idPrefix !== undefined) return b.renamePrefix(body.idPrefix, { actor: ACTOR });
       if (body.addType) b.addType(body.addType);
       if (body.savePattern) b.savePattern(body.savePattern, body.makeDefault !== false);
       if (body.branch) b.saveConfig({ branch: body.branch });

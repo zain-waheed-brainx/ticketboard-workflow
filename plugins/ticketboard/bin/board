@@ -59,6 +59,7 @@ const HELP = `board <command>
   gh auto|off                           use GitHub CLI when installed (auto), or never (off, e.g. org doesn't allow it)
   cleanup <id> [--delete-branch]        after the PR is merged: remove the worktree, move to done (ticket + history stay)
   reopen <id> "<what QA/the client found>" [--type bugfix]   new round: plan section, tasks, branch, worktree, PR
+  prefix [NEW]                          show the ticket ref prefix, or change it and rename every ticket (TIX-8 -> WWL-8)
   config [--json]
   serve [--port 4317]                   start the web board`;
 
@@ -241,7 +242,7 @@ async function main() {
       return out(`${t.id}: ${tk.tasks.length} task(s), ${tk.tasks.filter(x => x.parallel).length} marked parallel, build mode ${tk.buildMode}; plan is ${t.planStatus}`);
     }
     case 'task': {
-      // board task TIX-8 T3 status=done commit=abc123 note="..."
+      // board task WWL-8 T3 status=done commit=abc123 note="..."
       const patch = {};
       for (const kv of pos.slice(2)) { const i = kv.indexOf('='); if (i > 0) patch[kv.slice(0, i)] = kv.slice(i + 1); }
       const x = b.updateTask(pos[0], pos[1], patch);
@@ -249,8 +250,8 @@ async function main() {
       return out(`${x.id} ${x.status}. ${n.done}/${n.total} done${n.batch.length ? `; next: ${n.batch.map(y => y.id).join(' + ')}` : n.allDone ? '; all tasks done' : ''}`);
     }
     case 'test': {
-      // board test TIX-8 T3 --before   (right after writing the test: expected to FAIL)
-      // board test TIX-8 T3            (after the code: must PASS)
+      // board test WWL-8 T3 --before   (right after writing the test: expected to FAIL)
+      // board test WWL-8 T3            (after the code: must PASS)
       const phase = flags.before ? 'before' : 'after';
       const r = await b.runTaskTest(pos[0], pos[1], phase);
       if (r.manual) return out(`${pos[1]} has a manual test: ${r.manual}`);
@@ -307,6 +308,11 @@ async function main() {
       if (flags.json) return out(r, true);
       if (!r.pr) return out(`${b.resolveId(pos[0])}: no PR recorded`);
       return out(`${b.resolveId(pos[0])}: PR #${r.pr.number} ${r.pr.state}${r.pr.reviewDecision ? `, review: ${r.pr.reviewDecision.toLowerCase()}` : ''}${r.pr.url ? `\n${r.pr.url}` : ''}${r.gh === false ? `\n(${b.config().pr.gh === 'off' ? 'gh is off' : 'gh not installed'}: state is as last recorded; set it with board pr-state)` : ''}${r.error ? `\n(gh: ${r.error})` : ''}`);
+    }
+    case 'prefix': {
+      if (!pos[0]) return out(`ticket prefix: ${b.config().idPrefix} (e.g. ${b.config().idPrefix}-1)`);
+      const r = b.renamePrefix(pos[0]);
+      return out(`ticket prefix: ${r.prefix}${r.renamed.length ? `\nrenamed: ${r.renamed.map(m => `${m.from} -> ${m.to}`).join(', ')}` : ''}`);
     }
     case 'gh': {
       const m = b.setGhMode(pos[0]);

@@ -1,6 +1,6 @@
 ---
 name: resume
-description: Resume work on a ticketboard ticket right here in the chat - pick the ticket, get its branch and worktree ready without touching other work, load the plan, grill-me decisions, session notes and git state, and carry on. Use for "/resume", "resume TIX-8", "pick up where I left off", "continue my ticket", "what was I doing".
+description: Resume work on a ticketboard ticket right here in the chat - pick the ticket, get its branch and worktree ready without touching other work, load the plan, grill-me decisions, session notes and git state, and carry on. Use for "/resume", "resume WWL-8", "pick up where I left off", "continue my ticket", "what was I doing".
 argument-hint: "[ticket id]"
 ---
 
@@ -14,7 +14,7 @@ Use the `board` CLI. The plugin's `bin/` is on PATH; if `board` isn't found, use
 - Otherwise run `board resumable --json`:
   - empty list: say there's nothing started, and offer `/ticketboard:ticket new` or `start`.
   - one ticket: use it.
-  - several: ask with AskUserQuestion. Each option is `TIX-n: title`, with the branch and last note in the description, most recently touched first, at most 4. The rest are reachable through "Other" (they can type an id).
+  - several: ask with AskUserQuestion. Each option is `WWL-n: title`, with the branch and last note in the description, most recently touched first, at most 4. The rest are reachable through "Other" (they can type an id).
 
 ## 2. Get the folder ready
 Run `board prepare <id> --json`. It finds where the ticket's branch is checked out. It never creates a worktree, switches branches or stashes changes unless you ask.

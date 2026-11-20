@@ -120,11 +120,11 @@ What it does:
 Examples:
 ```
 /ticketboard:ticket new Export audit log as CSV
-/ticketboard:ticket plan TIX-8
-/ticketboard:build TIX-8
-/ticketboard:pr TIX-8
-/ticketboard:resume TIX-8
-/ticketboard:ticket reopen TIX-8 "QA: export times out over 10k rows"
+/ticketboard:ticket plan WWL-8
+/ticketboard:build WWL-8
+/ticketboard:pr WWL-8
+/ticketboard:resume WWL-8
+/ticketboard:ticket reopen WWL-8 "QA: export times out over 10k rows"
 ```
 
 ---
@@ -178,7 +178,7 @@ Then you **approve the plan and its tasks together**, in chat or with **Approve 
 4. **Code review:**
    - First Claude's own check for bugs, edge cases, error handling, debug code and lint.
    - Then the repo's review hook if it has one. Otherwise the `brainx:code-review` skill, then the `code-review` skill, then a careful read of the diff.
-5. **Commit**, depending on the commit mode, with a message from the `commit-message` skill (falling back to `TIX-8 T2: <title>`). Only a commit that actually went through is recorded. The board refuses a commit that isn't on the ticket's branch, that the base branch already has, or that belongs to another task.
+5. **Commit**, depending on the commit mode, with a message from the `commit-message` skill (falling back to `WWL-8 T2: <title>`). Only a commit that actually went through is recorded. The board refuses a commit that isn't on the ticket's branch, that the base branch already has, or that belongs to another task.
 6. **Save a note**, then pause or continue, depending on the run mode.
 
 At the end:
@@ -269,7 +269,7 @@ The board updates live while Claude works: it checks for changes every 1.5s.
   config.json                 personal settings (patterns, gh mode, next id)
   trusted.json                which version of the profile you trusted
   deleted.jsonl               log of deleted tickets
-  tickets/TIX-8/
+  tickets/WWL-8/
     ticket.json               fields, branch, worktree, PR, rounds
     plan.md                   current plan
     versions/plan-<time>.md   every earlier plan
@@ -286,9 +286,13 @@ The board updates live while Claude works: it checks for changes every 1.5s.
 If the plan changes after its tasks were made, the tasks are marked **stale** and the plan drops back to `validated`.
 
 ### Branch naming
-Patterns use the tokens `{type}` `{id}` `{ID}` `{slug}` `{user}` `{date}`. The default pattern is `{type}/{id}-{slug}`, for example `feature/tix-8-export-audit-log`.
+Patterns use the tokens `{type}` `{slug}` `{user}` `{date}`, and `{id}` `{ID}` for the ticket ref. The default pattern is `{type}/{slug}`, for example `feature/export-audit-log` or `enh/user-search`.
+- **No ticket ref in suggestions.** Suggested names never include the ticket ref. A pattern with `{id}` or `{ID}` is only used when you type it as a custom name. Two tickets can't share a branch: Start refuses a name another ticket already uses.
+- **Short type keys.** `{type}` is written short in branch names: `enhancement` → `enh`, `bugfix` → `fix`. `feature`, `hotfix` and `chore` stay as they are. Change them with `branch.typeKeys` in the profile.
+- **Meaningful short names.** `{slug}` is a ticket's short name (Claude suggests one, or you type it), else it's made from the title: filler words are dropped, common short forms are used (authentication → `auth`), and words are never cut in half.
 - **Save a pattern:** `board pattern save "<pattern>"`.
 - **Add a type:** `board type add release`.
+- **Ticket refs:** tickets are numbered with the project's initials, chosen during setup (e.g. `WWL-8`). Change them with `board prefix <NEW>` or in the board's settings: every existing ticket is renamed, and old refs keep working.
 - **Share with the team:** put the pattern in the profile's `branch` section.
 - Personal settings override the team's.
 
@@ -326,11 +330,13 @@ Worktrees are created at `../<repo>.worktrees/<branch>` by default. Branches are
     "lint": null
   },
   "worktree": { "copyFiles": [".env"], "setup": ["npm ci"], "launch": true },
-  "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{id}-{slug}" },
+  "idPrefix": "WWL",
+  "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{slug}", "typeKeys": { "enhancement": "enh", "bugfix": "fix" } },
   "pr": { "gh": "off" }
 }
 ```
-- `branch`: optional, shares the naming pattern and branch types with the team.
+- `idPrefix`: the ticket ref initials (e.g. `WWL-8`), asked during setup.
+- `branch`: optional, shares the naming pattern, branch types and short type keys with the team.
 - `pr.gh`: `"auto"` (default) uses `gh` when it's installed. `"off"` never uses it, for example when the org doesn't allow GitHub CLI.
 
 ### Personal settings (`.board/config.json`)
@@ -355,7 +361,7 @@ The skills drive a small CLI, `board`, which is on PATH inside Claude sessions t
 
 | Area | Commands |
 |---|---|
-| Setup | `init`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `config`, `serve [--port]` |
+| Setup | `init`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `prefix [NEW]`, `config`, `serve [--port]` |
 | Tickets | `new`, `list`, `show <id>`, `set <id> k=v`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
 | Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a` |
 | Branches | `suggest "<title>"`, `branches <id>`, `start <id> [--branch\|--current] [--base]`, `pattern save`, `type add` |
