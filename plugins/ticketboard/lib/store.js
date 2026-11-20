@@ -265,7 +265,10 @@ class Board {
           notes.push('the .board/ line in .gitignore is committed, so it stays; .board/ is now also hidden through .git/info/exclude');
         } else {
           const rest = cur.split('\n').filter(l => !/^\/?\.board\/?$/.test(l.trim())).join('\n');
-          if (!rest.trim() && !this.committed('.gitignore')) fs.unlinkSync(gi);
+          const head = tryGit(['show', 'HEAD:.gitignore'], this.root);
+          if (!rest.trim() && head === null) fs.unlinkSync(gi);
+          // If the .board/ line was the only change, put the committed file back byte for byte (trailing newline too).
+          else if (head !== null && rest.trimEnd() === head.trimEnd()) fs.writeFileSync(gi, execFileSync('git', ['show', 'HEAD:.gitignore'], { cwd: this.root }));
           else fs.writeFileSync(gi, rest.replace(/\n*$/, '\n'));
           notes.push('moved the .board/ line from .gitignore to .git/info/exclude (it was never committed)');
         }
