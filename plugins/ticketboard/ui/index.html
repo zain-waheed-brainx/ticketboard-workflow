@@ -326,7 +326,7 @@ function renderRunBar() {
   const bar = $('#runBar');
   if (!RUN.id) { bar.style.display = 'none'; return; }
   bar.style.display = 'flex';
-  const setupWarn = RUN.setup ? ` <span style="color:var(--warn)" title="Worktree setup failed at: ${esc(RUN.setup.failed.join(', '))}. Open the ticket's Setup log to see why and retry.">⚠ setup failed</span>` : '';
+  const setupWarn = RUN.setup ? ` <span style="color:var(--warn)" title="Worktree setup step failed: ${esc(RUN.setup.failed.join(', '))}. Open the ticket's Setup log to see why and retry.">⚠ setup step failed</span>` : '';
   if (RUN.installing) {
     bar.innerHTML = `<span class="chip" style="color:var(--warn)">⏳ ${esc(RUN.id)} installing ${esc((RUN.missing || []).join(', '))}</span> <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Cancel</a>`;
     $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };

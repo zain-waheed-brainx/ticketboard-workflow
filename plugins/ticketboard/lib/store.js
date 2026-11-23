@@ -127,16 +127,19 @@ function depDirs(profile) {
   return list.filter(d => typeof d === 'string' && d.trim() && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
 }
 
-// Dependency folders the worktree lacks although its manifest (or, for other folders, the main checkout) has them.
-function missingDeps(cwd, root, profile) {
+// Dependency folders the worktree needs: its manifest lists dependencies (or, for other folders, the main checkout has it).
+function neededDeps(cwd, root, profile) {
   return depDirs(profile).filter(d => {
-    if (fs.existsSync(path.join(cwd, d))) return false;
     const manifest = DEP_MANIFEST[path.basename(d)];
     if (!manifest) return fs.existsSync(path.join(root, d));
     const m = readJSON(path.join(cwd, path.dirname(d), manifest), null);
     // Only when it lists dependencies: a tooling-only package.json may never get a node_modules.
     return isObj(m) && ['require', 'require-dev', 'dependencies', 'devDependencies'].some(k => isObj(m[k]) && Object.keys(m[k]).length);
   });
+}
+
+function missingDeps(cwd, root, profile) {
+  return neededDeps(cwd, root, profile).filter(d => !fs.existsSync(path.join(cwd, d)));
 }
 
 function cp(args) {
@@ -1211,9 +1214,14 @@ class Board {
     }
     if (failures.length) {
       const [{ command, code }] = failures;
-      setStatus('failed', { command, code, failures });
-      this.log(t.id, 'bootstrap-failed', { command, code, failures: failures.length }, actor);
-      return { failed: command, code, failures, log: logFile };
+      // Dependencies in place (cloned from the main checkout) despite a failed install: a warning, not a blocker.
+      // Only when there are dependency folders to check: with none, nothing proves the install isn't needed.
+      const needed = neededDeps(wt, this.root, p);
+      const usable = needed.length > 0 && needed.every(d => fs.existsSync(path.join(wt, d)));
+      if (usable) write(`\nDependencies are in place, so the worktree is usable. Failed: ${failures.map(f => f.command).join(', ')}\n`);
+      setStatus(usable ? 'warning' : 'failed', { command, code, failures });
+      this.log(t.id, usable ? 'bootstrap-warning' : 'bootstrap-failed', { command, code, failures: failures.length }, actor);
+      return { failed: command, code, failures, usable, log: logFile };
     }
     setStatus('done');
     this.log(t.id, 'bootstrap-done', { steps: (p.worktree?.setup || []).length, copied: generated.length }, actor);
@@ -1408,7 +1416,7 @@ class Board {
     const projectInfo = p ? [`\n## Project (${this.profileName()})`,
       ...(p.commands?.dev || []).map(d => `dev: ${d.command}${d.port ? ` (port ${d.port})` : ''}`),
       p.commands?.test ? `test: ${p.commands.test}` : '', p.commands?.build ? `build: ${p.commands.build}` : '',
-      t.bootstrap ? `worktree setup: ${t.bootstrap.status}${t.bootstrap.command ? ` at "${t.bootstrap.command}"` : ''}` : ''
+      t.bootstrap ? `worktree setup: ${t.bootstrap.status}${t.bootstrap.command ? ` at "${t.bootstrap.command}"` : ''}${t.bootstrap.status === 'warning' ? ' (dependencies are in place: carry on, don\'t reinstall or copy them)' : ''}` : ''
     ].filter(Boolean).join('\n') : '';
     return [
       `# ${t.id}: ${t.title}`,
@@ -1722,7 +1730,7 @@ class Board {
     let t;
     try { t = id && this.get(id); } catch { return null; }
     const b = t?.bootstrap;
-    if (b?.status !== 'failed') return null;
+    if (b?.status !== 'failed' && b?.status !== 'warning') return null;
     return { command: b.command || null, failed: Array.isArray(b.failures) ? b.failures.map(f => f.command) : [b.command].filter(Boolean) };
   }
 

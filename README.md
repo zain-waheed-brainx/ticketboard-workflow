@@ -228,6 +228,7 @@ Then you **approve the plan and its tasks together**, in chat or with **Approve 
   - **Clone, not copy:** on macOS (APFS) the clone is near instant and uses no extra disk until a file changes. Elsewhere it's a plain copy. Install then only fixes what differs on the branch.
   - Set which folders in the profile's `worktree.cloneDeps` (`[]` turns it off). Only folders git ignores are cloned.
   - **A failed step doesn't stop the rest.** A stale `composer.lock` still lets `npm install` run. The ticket shows which steps failed.
+  - **Warning, not failure:** if a step fails but `vendor` and `node_modules` are in place, setup shows **warning** and build carries on without asking. Claude never copies them itself.
 
 ### 5. Build
 `/ticketboard:build <id>`. For each task:
