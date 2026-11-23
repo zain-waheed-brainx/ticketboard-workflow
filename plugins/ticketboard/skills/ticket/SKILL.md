@@ -55,7 +55,9 @@ Ask with AskUserQuestion how to plan:
 **Grilling.** Interview the user until you both understand the work the same way, settling the decisions that others depend on first. Keep it short: ask only what changes the plan, and reuse the user's past answers.
 
 1. **Prepare before asking.**
-   - Read the ticket (`board show <id>`) and the relevant code. Never ask what the code, the ticket or an earlier round already answers (test framework, folder layout, existing patterns).
+   - Read the project's rules: `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` in the main checkout, plus any standards files they point to. Rules they settle (where validation goes, how queries are written, comments, locking) are decided: apply them, never ask about them.
+   - Read the ticket (`board show <id>`) and the relevant code.
+   - **Find what already exists** before planning anything new: helpers, traits, base classes, models and their scopes/accessors, repositories, services, shared components, and config/constants for shared lists. The plan extends these instead of adding a parallel version. Never ask what the code, the ticket or an earlier round already answers (test framework, folder layout, existing patterns).
    - Run `board prefs --json` once. These are the user's answers from earlier plans, per topic, each with a `status`.
 2. **Sort every open question into one of three kinds.**
    - **Ticket facts:** what this ticket does, its scope, edge cases, data, behaviour. Always ask these. Never fill them from a preference.
@@ -76,13 +78,19 @@ Ask with AskUserQuestion how to plan:
 7. If they answer "No preference", take the recommended option, say so in the log answer, mark it *(Claude's call)* in the plan, and don't record it with `board pref`. It is never approval.
 8. Stop when nothing important about **what** is left open. Run `board plan-status <id> validated`, show a 5-line summary, then continue straight into the **tasks** step. Don't ask for approval yet: approval covers the plan and its tasks together.
 
-**Plan format.** Keep it short. A builder should be able to work from it a month from now with no other context:
+**Plan format.** Keep it short. A builder should be able to work from it a month from now with no other context. **Code approach** is filled from the code and the project's rules, not from questions; leave out lines that don't apply:
 ```
 # <title>
 ## Goal / why
 ## Scope (in / out)
 ## Decisions (each with a one-line why)
 ## Approach (steps, files/areas touched)
+## Code approach
+- Reuse: existing helpers/traits/models/components this work extends (file paths), and any logic that appears twice and becomes one shared method
+- Data access: the queries each part runs; relations eager-loaded for loops; batched writes; no query inside a loop; only the columns needed; nothing loaded twice in one request
+- Writes and concurrency: transactions and row locks for read-check-write on shared rows; files stored outside transactions and cleaned up on failure
+- Validation, authorization and errors: where each lives, following the project's rules
+- New tables holding user data: per-user limit, throttling, cleanup of abandoned rows
 ## Risks & open questions
 ## Done when
 ```
@@ -96,6 +104,8 @@ This step works out **how** the plan gets built, after grilling and before appro
    - **Bigger ticket** (more tasks spread over different areas, e.g. backend + frontend): launch one read-only subagent per area, in parallel, in a single message. Give each one the plan, its tasks, and the repo path. Tell it to read the relevant code without editing anything, and to return for each task:
      - the files it will change or add, including its test file
      - the steps, following the patterns already in the code
+     - **reuse:** the existing helpers, traits, models, repositories or components it extends (paths), so nothing is written twice
+     - **queries:** what it reads and writes, which relations are eager-loaded, and that nothing queries inside a loop
      - **its test:** the test file to add and the exact command that runs just that test (using the project's test runner), plus one line on what it proves
      - what it depends on
      - any decision the plan doesn't cover
@@ -103,6 +113,7 @@ This step works out **how** the plan gets built, after grilling and before appro
    - Use `test.manual` (with the reason) only when an automated test is really impossible, e.g. a purely visual change. Say so when you show the tasks.
    - If the project has no test runner yet, the first task sets one up (with its own smoke test). Every later task depends on it.
 3. **Merge.**
+   - **Shared logic:** if two tasks need the same logic (a lookup, a query, a calculation, a list of keys), make it one task that adds it in one place (model, helper, trait, constants), and have the others depend on it and call it. Never plan the same code in two tasks.
    - **Shared files:** tasks that touch the same files (or the same folder with wildcards) must run in sequence, so add a dependency between them. Mark the rest `parallel: true` only if they have no dependency on each other and no shared files.
    - **New decisions** a subagent or you ran into, i.e. anything that changes **what** gets built (a migration, a new library, an API shape): ask the user grill-style (batched in one AskUserQuestion call where they're independent, recommended option first, preferences applied as in grilling) and log it with `board grill`. Never decide these silently.
    - **Unclear parallel or sequence cases:** ask them together, e.g. "T3 and T4 both touch `routes.ts`: run them in sequence (Recommended) or in parallel?" When in doubt, choose sequence and set `claudesCall: true`.
@@ -127,7 +138,7 @@ This step works out **how** the plan gets built, after grilling and before appro
          "files": ["src/auth/permissions.ts", "tests/auth/audit-export-permission.test.ts"],
          "parallel": false,
          "claudesCall": false,
-         "spec": "Steps:\n1. ...\nNotes: follows the pattern in src/auth/roles.ts",
+         "spec": "Steps:\n1. ...\nReuse: extends src/auth/roles.ts (hasPermission)\nQueries: one query, roles eager-loaded; none in loops",
          "test": {
            "command": "npx jest tests/auth/audit-export-permission.test.ts",
            "description": "a role without audit:export gets 403; the compliance role gets 200"

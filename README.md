@@ -186,7 +186,16 @@ Jira data stays in `.board/`, which is never committed.
 
 Build, fixes and reviews in every worktree follow your project preferences too: `board show` lists them, and the plan wins where it differs. So the first few tickets ask about as much as before, and later ones mostly ask about the ticket itself. Build, run and commit modes are remembered across all your projects; everything else stays per project. See and edit them in the board's settings (**Settings** button, **Planning preferences**) or with `board prefs`.
 
-Plan format: Goal, Scope (in and out), Decisions (each with a one-line why), Approach, Risks, Done when.
+Plan format: Goal, Scope (in and out), Decisions (each with a one-line why), Approach, **Code approach**, Risks, Done when.
+
+**Code quality is planned, not just reviewed.** Before planning, Claude reads the project's rules (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and the standards files they name) and finds the code that already exists. Rules those files settle are applied, never asked. The plan's **Code approach** lists:
+- what gets reused (helpers, traits, models, components) and any logic that becomes one shared method;
+- the queries: eager loading for loops, batched writes, no query inside a loop, nothing loaded twice;
+- transactions and locks, where validation and authorization live, and limits for new user-data tables.
+
+Each task names what it reuses and what it queries; logic two tasks need becomes one task the others call. Build's ticket review checks every task for duplicated logic, queries in loops and the project's rules, and again across the whole ticket at the end.
+
+**Rules files reach worktrees.** When git ignores `CLAUDE.md` or `CLAUDE.local.md`, setup adds them to the files copied into each new worktree, so sessions there follow the same rules.
 
 ### 3. Tasks (the "how")
 Once the plan is settled, Claude splits it into tasks, usually 3-10. Each task can be finished, tested and committed on its own.

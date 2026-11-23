@@ -46,6 +46,9 @@ Repeat until `board next <id> --json` reports `allDone`.
    - **Spec:** does it do everything the task's spec says, following the plan's decisions?
    - **Scope:** does it do nothing outside the ticket's scope? A file outside the task's list is only fine if the change clearly belongs to that task.
    - **Test:** does the test really prove the spec, not just something easier?
+   - **Reuse and duplication:** does it extend the existing code the spec names instead of adding a parallel version? Is any block of logic now in two places (in this diff, or this diff and existing code)? Extract it into one method.
+   - **Queries:** no query inside a loop (including helpers or accessors that query on each call), relations used in loops eager-loaded, writes batched, only changed rows updated, nothing loaded twice in one request, only the columns needed.
+   - **Project rules:** does it follow `CLAUDE.md` / `CLAUDE.local.md` (comments on new functions, where validation and authorization go, transactions and locks)? Changes unrelated to the ticket stay out.
    - **Preferences:** does it follow **Your preferences** from `board show`, unless the plan says otherwise?
    - Fix any gap, re-run the task's test (`board test <id> <T#>`), and only then go on to code review.
 
@@ -84,7 +87,7 @@ Repeat until `board next <id> --json` reports `allDone`.
 ## 3. Done
 When every task is done:
 1. **Run every test together:** `board test-all <id>`. It runs each task's test in order, then the project's full test command. Everything must pass. A test that passed on its own but fails together usually means two tasks interfere with each other: find out why, fix it (that's work on the task that caused it), and run `test-all` again. If you can't fix it, stop and ask. Don't commit or report "ready" with failing tests.
-2. **Ticket review of the whole ticket.** Before any final code review or commit, check the finished work against the plan as a whole: its Goal, Scope (in and out) and Decisions. Look for anything missing, half done, or built beyond scope, including gaps between tasks that no single task's review would show. Then go through each "Done when" item. Check the ones you can actually verify (run the test, try the command) and tick them with `board done-when <id> <n>`. List the ones you couldn't verify. Fix any gap (in `per-task` mode the fix is a new commit, with its own code review), and re-run `board test-all <id>`.
+2. **Ticket review of the whole ticket.** Before any final code review or commit, check the finished work against the plan as a whole: its Goal, Scope (in and out), Decisions and **Code approach**. Across all tasks together, look again for duplicated logic and for queries in loops, since those often appear between tasks. Look for anything missing, half done, or built beyond scope, including gaps between tasks that no single task's review would show. Then go through each "Done when" item. Check the ones you can actually verify (run the test, try the command) and tick them with `board done-when <id> <n>`. List the ones you couldn't verify. Fix any gap (in `per-task` mode the fix is a new commit, with its own code review), and re-run `board test-all <id>`.
 3. **`single` commit mode:** code-review the whole ticket and make the one commit now, with the same rules as step 5 of the loop.
    - Run `git -C <wt> add -A` (check `git status` first, so only this ticket's work goes in).
    - Self code review of the whole staged diff first, without a skill. Fix what you find and re-run `board test-all <id>`.

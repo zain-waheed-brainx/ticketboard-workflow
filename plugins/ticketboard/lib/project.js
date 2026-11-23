@@ -9,7 +9,9 @@ const { execFileSync } = require('child_process');
 const FILE = 'ticketboard.project.json';
 // Gitignored files a worktree usually needs copied from the main checkout.
 const COPY_CANDIDATES = ['.env', '.env.local', '.env.development', '.env.development.local', '.env.test',
-  'config/master.key', 'config/credentials.yml.enc', 'auth.json', '.npmrc', 'local.settings.json'];
+  'config/master.key', 'config/credentials.yml.enc', 'auth.json', '.npmrc', 'local.settings.json',
+  // Claude's project rules: when git ignores them, a worktree session would otherwise work without them.
+  'CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'];
 
 const exists = (root, f) => fs.existsSync(path.join(root, f));
 const readJSON = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
