@@ -120,6 +120,55 @@ function nodeNote(node) {
   return node?.use ? `Node ${node.use} (asked: ${node.want} in ${node.from})` : '';
 }
 
+// Dependency folders a worktree takes from the main checkout before setup runs, so installs only fix differences.
+const DEP_MANIFEST = { vendor: 'composer.json', node_modules: 'package.json' };
+function depDirs(profile) {
+  const list = Array.isArray(profile?.worktree?.cloneDeps) ? profile.worktree.cloneDeps : ['vendor', 'node_modules'];
+  return list.filter(d => typeof d === 'string' && d.trim() && !path.isAbsolute(d) && !d.split(/[\\/]/).includes('..'));
+}
+
+// Dependency folders the worktree lacks although its manifest (or, for other folders, the main checkout) has them.
+function missingDeps(cwd, root, profile) {
+  return depDirs(profile).filter(d => {
+    if (fs.existsSync(path.join(cwd, d))) return false;
+    const manifest = DEP_MANIFEST[path.basename(d)];
+    if (!manifest) return fs.existsSync(path.join(root, d));
+    const m = readJSON(path.join(cwd, path.dirname(d), manifest), null);
+    // Only when it lists dependencies: a tooling-only package.json may never get a node_modules.
+    return isObj(m) && ['require', 'require-dev', 'dependencies', 'devDependencies'].some(k => isObj(m[k]) && Object.keys(m[k]).length);
+  });
+}
+
+function cp(args) {
+  return new Promise(resolve => {
+    let err = '';
+    const child = spawn('cp', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.on('data', d => { err = (err + d).slice(-2000); });
+    child.on('close', code => resolve(code === 0 ? null : err.trim() || `cp exited ${code}`));
+    child.on('error', e => resolve(e.message));
+  });
+}
+
+// Copy-on-write clone where the disk supports it (APFS on macOS, btrfs/xfs on Linux): near-instant, no extra
+// disk until a file changes. Otherwise a plain copy. Lands under a temp name and is renamed, so a failed or
+// interrupted copy never leaves a half folder behind.
+async function cloneDir(src, dest) {
+  const tmp = `${dest}.tb-clone-${process.pid}`;
+  const clear = () => fs.rmSync(tmp, { recursive: true, force: true });
+  clear();
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const fast = process.platform === 'darwin' ? ['-cR'] : process.platform === 'linux' ? ['-R', '--reflink=auto'] : null;
+  let how = 'cloned', err = fast ? await cp([...fast, src, tmp]) : 'no clone support';
+  if (err) { clear(); how = 'copied'; err = await cp(['-R', src, tmp]); }
+  if (err) { clear(); return { error: err }; }
+  fs.renameSync(tmp, dest);
+  return { how };
+}
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
 function runShell(command, cwd, timeoutMs = 15 * 60 * 1000, extraEnv = {}) {
   return new Promise(resolve => {
     const started = Date.now();
@@ -1076,7 +1125,23 @@ class Board {
 
   // Prepare a new worktree from the project profile: copy ignored files, write .claude/launch.json,
   // run setup commands. Output goes to the ticket's bootstrap.log (and onOutput, for the CLI).
-  async bootstrap(id, { onOutput, actor } = {}) {
+  // One setup per ticket at a time in this process: a second caller (Run app during start's setup) joins it
+  // and gets the rest of its output.
+  bootstrap(id, { onOutput, actor } = {}) {
+    const key = this.resolveId(id);
+    this.setups = this.setups || new Map();
+    let job = this.setups.get(key);
+    if (job) {
+      if (onOutput) { onOutput('(setup already running for this ticket: joining it)\n'); job.listeners.add(onOutput); }
+      return job.promise;
+    }
+    const listeners = new Set(onOutput ? [onOutput] : []);
+    job = { listeners, promise: this.runSetup(key, { onOutput: s => listeners.forEach(f => f(s)), actor }).finally(() => this.setups.delete(key)) };
+    this.setups.set(key, job);
+    return job.promise;
+  }
+
+  async runSetup(id, { onOutput, actor } = {}) {
     const t = this.get(id);
     const p = this.profile();
     const wt = t.worktree;
@@ -1103,6 +1168,14 @@ class Board {
       generated.push(f);
       write(`copied ${f}\n`);
     }
+    for (const d of depDirs(p)) {
+      const src = path.join(this.root, d), dest = path.join(wt, d);
+      if (fs.existsSync(dest) || !fs.statSync(src, { throwIfNoEntry: false })?.isDirectory()) continue;
+      if (tryGit(['check-ignore', '-q', d], wt) === null) { write(`skip ${d} (git doesn't ignore it)\n`); continue; }
+      write(`cloning ${d} from the main checkout... `);
+      const r = await cloneDir(src, dest);
+      write(r.error ? `failed (${r.error}); setup will install it\n` : `${r.how}\n`);
+    }
     const dev = p.commands?.dev || [];
     if (p.worktree?.launch !== false && dev.length && !fs.existsSync(path.join(wt, '.claude', 'launch.json'))) {
       const configurations = dev.map(d => {
@@ -1117,11 +1190,14 @@ class Board {
     const node = nodeFor(wt, p);
     if (node?.error) {
       write(`\n${node.error}\n`);
-      setStatus('failed', { command: 'node version', code: 1 });
+      const failures = [{ command: 'node version', code: 1 }];
+      setStatus('failed', { command: 'node version', code: 1, failures });
       this.log(t.id, 'bootstrap-failed', { command: 'node version', code: 1 }, actor);
-      return { failed: 'node version', code: 1, log: logFile };
+      return { failed: 'node version', code: 1, failures, log: logFile };
     }
     if (node?.use) write(`using ${nodeNote(node)}\n`);
+    // Every step runs even after one fails (a stale composer.lock shouldn't leave node_modules uninstalled).
+    const failures = [];
     for (const cmd of p.worktree?.setup || []) {
       write(`\n$ ${cmd}\n`);
       const code = await new Promise(resolve => {
@@ -1131,11 +1207,13 @@ class Board {
         child.on('close', resolve);
         child.on('error', e => { write(`${e.message}\n`); resolve(127); });
       });
-      if (code !== 0) {
-        setStatus('failed', { command: cmd, code });
-        this.log(t.id, 'bootstrap-failed', { command: cmd, code }, actor);
-        return { failed: cmd, code, log: logFile };
-      }
+      if (code !== 0) { failures.push({ command: cmd, code }); write(`\n(exit ${code}; carrying on with the next step)\n`); }
+    }
+    if (failures.length) {
+      const [{ command, code }] = failures;
+      setStatus('failed', { command, code, failures });
+      this.log(t.id, 'bootstrap-failed', { command, code, failures: failures.length }, actor);
+      return { failed: command, code, failures, log: logFile };
     }
     setStatus('done');
     this.log(t.id, 'bootstrap-done', { steps: (p.worktree?.setup || []).length, copied: generated.length }, actor);
@@ -1625,11 +1703,27 @@ class Board {
   runState() {
     const r = readJSON(this.runFile(), null);
     if (!isObj(r) || !Array.isArray(r.procs)) return { running: false };
+    const setup = this.setupWarning(r.id);
+    if (isObj(r.installing)) {
+      return pidAlive(r.installing.pid)
+        ? { running: false, installing: true, id: r.id, startedAt: r.startedAt, cwd: r.cwd, missing: r.installing.missing || [], procs: [], crashed: [] }
+        : { running: false, id: r.id, cwd: r.cwd, error: 'Setup stopped before the servers started (the board closed?). Run app again.', procs: [], crashed: [] };
+    }
+    if (r.error) return { running: false, id: r.id, cwd: r.cwd, error: r.error, procs: [], crashed: [], ...(setup ? { setup } : {}) };
     const procs = r.procs.map(p => ({ ...p, alive: Board.alive(p) }));
     const running = procs.some(p => p.alive);
     const port = procs.find(p => p.port)?.port;
     const url = this.config().run?.url || (port ? `http://localhost:${port}` : null);
-    return { running, id: r.id, startedAt: r.startedAt, cwd: r.cwd, node: r.node || null, procs, url, crashed: procs.filter(p => !p.alive).map(p => p.name) };
+    return { running, id: r.id, startedAt: r.startedAt, cwd: r.cwd, node: r.node || null, procs, url, crashed: procs.filter(p => !p.alive).map(p => p.name), ...(setup ? { setup } : {}) };
+  }
+
+  // The running ticket's failed worktree setup, so the board can say why something may be off.
+  setupWarning(id) {
+    let t;
+    try { t = id && this.get(id); } catch { return null; }
+    const b = t?.bootstrap;
+    if (b?.status !== 'failed') return null;
+    return { command: b.command || null, failed: Array.isArray(b.failures) ? b.failures.map(f => f.command) : [b.command].filter(Boolean) };
   }
 
   runLogTail(id, bytes = 20000) {
@@ -1698,7 +1792,9 @@ class Board {
   }
 
   // replace: stop another ticket's servers first. Without it, a running ticket is refused (code 'busy').
-  async runStart(id, { replace = false, actor } = {}) {
+  // If the worktree lacks its dependencies (vendor, node_modules), worktree setup runs first; wait: false
+  // returns at once with installing: true and starts the servers when setup ends (the board's button).
+  async runStart(id, { replace = false, wait = true, actor } = {}) {
     const t = this.get(id);
     const p = this.profile();
     const dev = (p?.commands?.dev || []).filter(d => isObj(d) && typeof d.command === 'string' && d.command.trim());
@@ -1706,12 +1802,47 @@ class Board {
     if (!this.trusted()) throw new Error('The project profile is not trusted on this machine yet: review it with board project show, then board project trust');
     const cwd = t.worktree && fs.existsSync(t.worktree) ? t.worktree : null;
     if (!cwd) throw new Error(`${t.id} has no worktree to run`);
-    const node = this.nodeEnvFor(cwd);
     const cur = this.runState();
-    if (cur.running && cur.id !== t.id && !replace) {
+    if (cur.installing && cur.id === t.id) return cur;
+    if ((cur.running || cur.installing) && cur.id !== t.id && !replace) {
       throw Object.assign(new Error(`${cur.id}'s servers are running. Stop them and start ${t.id}?`), { code: 'busy', running: cur.id, status: 409 });
     }
     if (cur.running || readJSON(this.runFile(), null)) await this.runStop({ actor });
+    fs.mkdirSync(this.tdir(t.id), { recursive: true });
+    const log = this.runLog(t.id);
+    const missing = missingDeps(cwd, this.root, p);
+    if (!missing.length) {
+      fs.writeFileSync(log, '');
+      return this.runSpawn(t, cwd, dev, actor);
+    }
+    const token = `${process.pid}-${Date.now()}`;
+    const append = s => fs.appendFileSync(log, s);
+    const mine = () => readJSON(this.runFile(), null)?.installing?.token === token;
+    fs.writeFileSync(log, `# ${t.id}: ${missing.join(', ')} missing in ${cwd}\n# Running worktree setup first, then starting the servers.\n`
+      + (this.setups?.has(t.id) ? '# Setup is already running for this ticket: waiting for it (its output is in the ticket\'s Setup log).\n' : '') + '\n');
+    writeJSON(this.runFile(), { id: t.id, cwd, startedAt: now(), installing: { pid: process.pid, token, missing }, procs: [] });
+    this.log(t.id, 'install-before-run', { missing }, actor);
+    const fail = msg => {
+      append(`\n# ${msg}\n`);
+      if (mine()) writeJSON(this.runFile(), { id: t.id, cwd, startedAt: now(), error: msg, procs: [] });
+    };
+    const job = (async () => {
+      const r = await this.bootstrap(t.id, { onOutput: append, actor });
+      if (!mine()) return append('\n# Stopped: the servers were not started.\n');
+      const still = missingDeps(cwd, this.root, p);
+      if (r.skipped) return fail(`Setup skipped: ${r.skipped}`);
+      if (still.length && r.failed) return fail(`Still missing after setup: ${still.join(', ')}. Setup failed at "${r.failed}". Fix it, then Run app again.`);
+      if (still.length) append(`\n# Setup passed but ${still.join(', ')} still isn't there (Yarn PnP or another layout?): starting anyway.\n`);
+      if (r.failed) append(`\n# Setup had ${r.failures.length} failed step(s), starting anyway: ${r.failures.map(f => f.command).join(', ')}\n`);
+      append('\n');
+      await this.runSpawn(t, cwd, dev, actor);
+    })().catch(e => fail(e.message));
+    if (wait) await job;
+    return this.runState();
+  }
+
+  async runSpawn(t, cwd, dev, actor) {
+    const node = this.nodeEnvFor(cwd);
     for (const d of dev.filter(d => Number.isInteger(d.port))) {
       let busy = await Board.portBusy(d.port);
       for (let i = 0; busy && i < 20; i++) { await new Promise(res => setTimeout(res, 250)); busy = await Board.portBusy(d.port); }
@@ -1720,9 +1851,8 @@ class Board {
         throw new Error(`Port ${d.port} is in use by ${who || 'another program'}, not started from the board. Stop it (e.g. a php artisan serve in a terminal), then run again`);
       }
     }
-    fs.mkdirSync(this.tdir(t.id), { recursive: true });
     const log = this.runLog(t.id);
-    fs.writeFileSync(log, `# ${t.id} servers started ${now()} in ${cwd}${node.note ? `\n# ${node.note}` : ''}\n`);
+    fs.appendFileSync(log, `# ${t.id} servers started ${now()} in ${cwd}${node.note ? `\n# ${node.note}` : ''}\n`);
     const procs = [];
     for (const d of dev) {
       const fd = fs.openSync(log, 'a');

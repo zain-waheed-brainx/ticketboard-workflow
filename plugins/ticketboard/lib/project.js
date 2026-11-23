@@ -38,7 +38,7 @@ function save(root, profile) { return saveFile(path.join(root, FILE), profile); 
 function commandHash(profile) {
   if (!profile) return null;
   const c = profile.commands || {};
-  const runs = { copyFiles: profile.worktree?.copyFiles || [], setup: profile.worktree?.setup || [], dev: c.dev || [], test: c.test || null, build: c.build || null, lint: c.lint || null };
+  const runs = { copyFiles: profile.worktree?.copyFiles || [], ...(profile.worktree?.cloneDeps ? { cloneDeps: profile.worktree.cloneDeps } : {}), setup: profile.worktree?.setup || [], dev: c.dev || [], test: c.test || null, build: c.build || null, lint: c.lint || null };
   return crypto.createHash('sha256').update(JSON.stringify(runs)).digest('hex').slice(0, 16);
 }
 
@@ -92,6 +92,7 @@ function mergeSubprojects(root, out) {
     out.evidence.push(...sub.evidence.map(e => `${name}/${e}`));
     out.worktree.setup.push(...sub.worktree.setup.map(s => `cd ${q} && ${s}`));
     out.worktree.copyFiles.push(...sub.worktree.copyFiles.map(f => `${name}/${f}`));
+    out.worktree.cloneDeps.push(...sub.worktree.cloneDeps.map(f => `${name}/${f}`));
     out.commands.dev.push(...sub.commands.dev.map(d => ({ ...d, name: name, command: `cd ${q} && ${d.command}`, detectedFrom: `${name}/${d.detectedFrom}` })));
     if (sub.commands.test) tests.push(`(cd ${q} && ${sub.commands.test})`);
     if (sub.commands.build) builds.push(`(cd ${q} && ${sub.commands.build})`);
@@ -113,7 +114,7 @@ function detect(root, depth = 0) {
     name: path.basename(root), stack: [], tools: ['git'], versions: {},
     baseBranch: null,
     commands: { install: [], dev: [], test: null, build: null, lint: null },
-    worktree: { copyFiles: [], setup: [], launch: true },
+    worktree: { copyFiles: [], cloneDeps: [], setup: [], launch: true },
     unsure: [], evidence: []
   };
   const pkg = readJSON(path.join(root, 'package.json'));
@@ -123,6 +124,7 @@ function detect(root, depth = 0) {
     out.stack.push('php');
     out.tools.push('php', 'composer');
     out.worktree.setup.push('composer install');
+    out.worktree.cloneDeps.push('vendor');
     out.evidence.push('composer.json');
     if (exists(root, 'artisan')) {
       out.stack.push('laravel');
@@ -137,6 +139,7 @@ function detect(root, depth = 0) {
   }
   if (pkg) {
     out.evidence.push('package.json');
+    out.worktree.cloneDeps.push('node_modules');
     nodeProfile(root, pkg, out);
   }
   if (exists(root, 'pyproject.toml') || exists(root, 'requirements.txt')) {

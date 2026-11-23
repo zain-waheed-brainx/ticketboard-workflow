@@ -98,7 +98,7 @@ async function setupAfterStart(b, t, flags) {
   if (flags.setup === false) return;
   const r = await b.bootstrap(t.id, { onOutput: s => process.stdout.write(s) });
   if (r.skipped) console.log(`worktree setup skipped: ${r.skipped}`);
-  else if (r.failed) { console.log(`\nworktree setup FAILED at "${r.failed}" (exit ${r.code}). Log: ${r.log}\nFix it, then: board bootstrap ${t.id}`); process.exitCode = 1; }
+  else if (r.failed) { console.log(`\nworktree setup FAILED at ${r.failures.map(f => `"${f.command}" (exit ${f.code})`).join(', ')}. Log: ${r.log}\nFix it, then: board bootstrap ${t.id}`); process.exitCode = 1; }
   else console.log('\nworktree setup done');
 }
 
@@ -342,10 +342,14 @@ async function main() {
       return out(`${b.resolveId(pos[0])}: PR #${r.pr.number} ${r.pr.state}${r.pr.reviewDecision ? `, review: ${r.pr.reviewDecision.toLowerCase()}` : ''}${r.pr.url ? `\n${r.pr.url}` : ''}${r.gh === false ? `\n(${b.config().pr.gh === 'off' ? 'gh is off' : 'gh not installed'}: state is as last recorded; set it with board pr-state)` : ''}${r.error ? `\n(gh: ${r.error})` : ''}`);
     }
     case 'run': {
-      const show = s => !s.running && s.id
+      const warn = s => s.setup ? `\nworktree setup failed at: ${s.setup.failed.join(', ')} (board bootstrap ${s.id} to retry)` : '';
+      const show = s => s.installing
+        ? `${s.id}: installing ${s.missing.join(', ')} first, then starting. Watch: board run --log ${s.id}`
+        : s.error ? `${s.id} not started: ${s.error}${warn(s)}`
+        : !s.running && s.id
         ? `${s.id}'s servers all stopped on their own (${s.crashed.join(', ')}). See why: board run --log ${s.id}`
         : s.running
-        ? `${s.id} running in ${s.cwd}\n${s.procs.map(p => `  ${p.alive ? 'up  ' : 'DOWN'} ${p.name}: ${p.command}`).join('\n')}${s.node ? `\n${s.node}` : ''}${s.url ? `\nopen: ${s.url}` : ''}`
+        ? `${s.id} running in ${s.cwd}\n${s.procs.map(p => `  ${p.alive ? 'up  ' : 'DOWN'} ${p.name}: ${p.command}`).join('\n')}${s.node ? `\n${s.node}` : ''}${s.url ? `\nopen: ${s.url}` : ''}${warn(s)}`
         : 'Nothing running';
       if (flags.stop) { const r = await b.runStop(); return out(r.stopped ? `stopped ${r.stopped}'s servers` : 'Nothing was running'); }
       if (flags.status || !pos[0] && !flags.log) return out(flags.json ? b.runState() : show(b.runState()), flags.json);

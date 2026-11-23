@@ -326,14 +326,21 @@ function renderRunBar() {
   const bar = $('#runBar');
   if (!RUN.id) { bar.style.display = 'none'; return; }
   bar.style.display = 'flex';
+  const setupWarn = RUN.setup ? ` <span style="color:var(--warn)" title="Worktree setup failed at: ${esc(RUN.setup.failed.join(', '))}. Open the ticket's Setup log to see why and retry.">⚠ setup failed</span>` : '';
+  if (RUN.installing) {
+    bar.innerHTML = `<span class="chip" style="color:var(--warn)">⏳ ${esc(RUN.id)} installing ${esc((RUN.missing || []).join(', '))}</span> <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Cancel</a>`;
+    $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
+    $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
+    return;
+  }
   if (!RUN.running) {
-    bar.innerHTML = `<span class="chip" style="color:var(--danger)">■ ${esc(RUN.id)} servers stopped</span> <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Dismiss</a>`;
+    bar.innerHTML = `<span class="chip" style="color:var(--danger)" title="${esc(RUN.error || '')}">■ ${esc(RUN.id)} ${RUN.error ? 'not started' : 'servers stopped'}</span>${setupWarn} <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Dismiss</a>`;
     $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
     $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
     return;
   }
   const down = RUN.crashed?.length ? ` <span style="color:var(--danger)" title="Stopped on its own: check the output">${esc(RUN.crashed.join(', '))} down</span>` : '';
-  bar.innerHTML = `<span class="chip">▶ ${esc(RUN.id)} running</span>${down}`
+  bar.innerHTML = `<span class="chip">▶ ${esc(RUN.id)} running</span>${down}${setupWarn}`
     + (RUN.url ? ` <a href="${esc(RUN.url)}" target="_blank" rel="noopener noreferrer">Open app</a>` : '')
     + ` <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Stop</a>`;
   $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
@@ -343,13 +350,17 @@ function renderRunButton() {
   if (!openData) return;
   const t = openData.ticket;
   const b = $('#dRun');
-  const mine = RUN.running && RUN.id === t.id;
+  const mine = (RUN.running || RUN.installing) && RUN.id === t.id;
   b.style.display = openData.worktreeExists && S.project.exists ? '' : 'none';
   b.textContent = mine ? 'Stop app' : 'Run app';
 }
 async function refreshRun() {
   if (document.hidden) return; // no polling in a background tab; it catches up when shown
+  const was = RUN;
   try { RUN = await api('GET', '/api/run'); } catch { return; }
+  if (was.installing && was.id === RUN.id && !RUN.installing) {
+    toast(RUN.running ? `${RUN.id} installed and running${RUN.url ? `: ${RUN.url}` : ''}` : `${RUN.id} not started: ${RUN.error || 'check the output'}`);
+  }
   renderRunBar(); renderRunButton();
 }
 async function stopRun() {
@@ -371,13 +382,13 @@ async function showRunLog(id) {
 }
 $('#dRun').onclick = async () => {
   const t = openData.ticket;
-  if (RUN.running && RUN.id === t.id) return stopRun();
-  if (RUN.running && !confirm(`${RUN.id}'s servers are running. Stop them and start ${t.id}?`)) return;
+  if ((RUN.running || RUN.installing) && RUN.id === t.id) return stopRun();
+  if ((RUN.running || RUN.installing) && !confirm(`${RUN.id}'s servers are running. Stop them and start ${t.id}?`)) return;
   const b = $('#dRun'); b.disabled = true; b.textContent = 'Starting…';
   try {
     RUN = await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/run`, { replace: true });
-    toast(!RUN.running ? 'The servers stopped right away: check the output' : RUN.crashed?.length ? `Started, but ${RUN.crashed.join(', ')} stopped: check the output` : `${t.id} running${RUN.url ? `: ${RUN.url}` : ''}`);
-    if (!RUN.running || RUN.crashed?.length) showRunLog(t.id);
+    toast(RUN.installing ? `Installing ${RUN.missing.join(', ')} first, then starting` : RUN.error ? `Not started: ${RUN.error}` : !RUN.running ? 'The servers stopped right away: check the output' : RUN.crashed?.length ? `Started, but ${RUN.crashed.join(', ')} stopped: check the output` : `${t.id} running${RUN.url ? `: ${RUN.url}` : ''}`);
+    if (RUN.installing || !RUN.running || RUN.crashed?.length) showRunLog(t.id);
   } catch (e) { toast(e.message); }
   b.disabled = false; renderRunBar(); renderRunButton();
 };

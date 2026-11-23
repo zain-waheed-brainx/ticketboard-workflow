@@ -141,7 +141,7 @@ function routes(b) {
     ['GET', /^\/api\/tickets\/([\w-]+)\/context$/, ([, id]) => ({ context: b.context(id) })],
     ['GET', /^\/api\/run$/, () => b.runState()],
     ['POST', /^\/api\/run\/stop$/, () => b.runStop({ actor: ACTOR })],
-    ['POST', /^\/api\/tickets\/([\w-]+)\/run$/, ([, id], body) => b.runStart(id, { replace: body.replace === true, actor: ACTOR })],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/run$/, ([, id], body) => b.runStart(id, { replace: body.replace === true, wait: false, actor: ACTOR })],
     ['GET', /^\/api\/tickets\/([\w-]+)\/run-log$/, ([, id]) => ({ log: b.runLogTail(id) })],
     ['GET', /^\/api\/prefs$/, () => b.prefs()],
     // Typed in the board, so it's your explicit choice: applied from now on without asking.

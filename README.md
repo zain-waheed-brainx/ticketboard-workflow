@@ -224,7 +224,10 @@ Then you **approve the plan and its tasks together**, in chat or with **Approve 
 `/ticketboard:ticket start <id>`, or **Start work** on the board:
 - creates the branch from the base branch you choose;
 - creates a **worktree**, a separate folder, so your main folder is untouched;
-- runs worktree setup: copies `.env`, writes `.claude/launch.json`, and runs install.
+- runs worktree setup: copies `.env`, clones `vendor` and `node_modules` from the main folder, writes `.claude/launch.json`, and runs install.
+  - **Clone, not copy:** on macOS (APFS) the clone is near instant and uses no extra disk until a file changes. Elsewhere it's a plain copy. Install then only fixes what differs on the branch.
+  - Set which folders in the profile's `worktree.cloneDeps` (`[]` turns it off). Only folders git ignores are cloned.
+  - **A failed step doesn't stop the rest.** A stale `composer.lock` still lets `npm install` run. The ticket shows which steps failed.
 
 ### 5. Build
 `/ticketboard:build <id>`. For each task:
@@ -294,6 +297,8 @@ Grilling only covers what's new. Earlier rounds' branches, PRs and tasks stay in
 - **Open app** goes to `http://localhost:<port>`, or to the URL in Settings → **Run app** (e.g. a tenant subdomain). CLI: `board run-url <URL>`.
 - **Port in use** by something the board didn't start (a `php artisan serve` in a terminal): it refuses and names the process.
 - **Clean up and Delete** stop the ticket's servers first.
+- **Nothing installed?** If the worktree lacks `vendor` or `node_modules`, Run app runs worktree setup first, then starts the servers. The bar shows **installing**; **Cancel** stops the start.
+- **Setup failed** shows as a warning in the bar, with the failed steps.
 - Commands come from the profile's `commands.dev` and only run once the profile is trusted. Setup detects Horizon when `laravel/horizon` is installed.
 
 **Node version per project.** Run, worktree setup and tests use the Node version the project asks for: `.nvmrc` or `.node-version` in the worktree, else an exact `versions.node` in the profile. It's picked from nvm's installed versions (exact, else the newest with the same major.minor, else the same major) and put first on PATH, so `npm` and `node` use it. If nvm doesn't have it, the command stops and says `nvm install <version>`.
@@ -399,12 +404,13 @@ Worktrees are created at `../<repo>.worktrees/<branch>` by default. Branches are
     "build": "npm run build",
     "lint": null
   },
-  "worktree": { "copyFiles": [".env"], "setup": ["npm ci"], "launch": true },
+  "worktree": { "copyFiles": [".env"], "cloneDeps": ["node_modules"], "setup": ["npm ci"], "launch": true },
   "idPrefix": "WWL",
   "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{slug}", "typeKeys": { "enhancement": "enh", "bugfix": "fix" } },
   "pr": { "gh": "off" }
 }
 ```
+- `worktree.cloneDeps`: dependency folders cloned from the main folder before setup (default `vendor`, `node_modules`).
 - `idPrefix`: the ticket ref initials (e.g. `WWL-8`), asked during setup.
 - `branch`: optional, shares the naming pattern, branch types and short type keys with the team.
 - `pr.gh`: `"auto"` (default) uses `gh` when it's installed. `"off"` never uses it, for example when the org doesn't allow GitHub CLI.

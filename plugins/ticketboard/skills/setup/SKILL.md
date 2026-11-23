@@ -64,7 +64,7 @@ Write the final profile to a scratchpad JSON file using this shape:
     "build": "npm run build",
     "lint": null
   },
-  "worktree": { "copyFiles": [".env"], "setup": ["npm ci"], "launch": true },
+  "worktree": { "copyFiles": [".env"], "cloneDeps": ["node_modules"], "setup": ["npm ci"], "launch": true },
   "idPrefix": "WWL",
   "branch": { "types": ["feature", "hotfix", "enhancement", "bugfix", "chore"], "pattern": "{type}/{slug}" }
 }
