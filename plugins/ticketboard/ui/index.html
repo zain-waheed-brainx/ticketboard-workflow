@@ -167,6 +167,8 @@ body.noscroll { overflow: hidden; }
         <div class="field"><label>Priority</label><select id="dPriority"><option>low</option><option>medium</option><option>high</option><option>urgent</option></select></div>
         <div class="field"><label>Plan</label><select id="dPlanStatus"><option>none</option><option>drafting</option><option>needs-validation</option><option>validated</option><option>tasks-ready</option><option>approved</option></select></div>
         <div class="field"><label>Labels</label><input id="dLabels" placeholder="comma,separated"></div>
+        <div class="field"><label>Ticket number</label><input id="dRef" placeholder="ABC-1234" maxlength="40" style="width:110px"></div>
+        <div class="field"><label>Jira</label><div id="dJira" class="hint"></div></div>
         <div class="field" style="flex:1;min-width:200px"><label>Branch / worktree</label><div id="dBranch" class="hint"></div></div>
       </div>
     </div>
@@ -192,7 +194,11 @@ body.noscroll { overflow: hidden; }
 
 <div class="modal" id="mNew"><div class="mbox">
   <h3>New ticket</h3>
-  <label>Title</label><input id="nTitle" class="w100" placeholder="e.g. Add CSV export to reports">
+  <label>Jira link <span class="hint">(optional: Claude imports the title, description and comments)</span></label>
+  <input id="nJira" class="w100" autocomplete="off" placeholder="https://yourorg.atlassian.net/browse/ABC-123">
+  <label>Title <span class="hint" id="nTitleHint"></span></label><input id="nTitle" class="w100" placeholder="e.g. Add CSV export to reports">
+  <label>Ticket number <span class="hint">(optional, e.g. ABC-1234: used in branch names, commits and the PR title)</span></label>
+  <input id="nRef" class="w100" autocomplete="off" maxlength="40">
   <div style="display:flex;gap:10px">
     <div style="flex:1"><label>Type</label><select id="nType" class="w100"></select></div>
     <div style="flex:1"><label>Priority</label><select id="nPriority" class="w100"><option>low</option><option selected>medium</option><option>high</option><option>urgent</option></select></div>
@@ -396,7 +402,7 @@ function renderBoard() {
     const ts = S.tickets.filter(t => t.column === c);
     return `<section class="col" data-col="${esc(c)}"><h2><span>${esc(c)}</span><span>${ts.length}</span></h2><div class="cards">${ts.map(t => `
       <article class="card" draggable="true" data-id="${esc(t.id)}">
-        <div class="top"><code>${esc(t.id)}</code>${typeChip(t.type)}<span class="ps ps-${esc(t.planStatus)}">● plan ${esc(t.planStatus)}</span></div>
+        <div class="top"><code>${esc(t.id)}</code>${t.ref ? `<span class="chip" title="Ticket number${t.jira ? ' (Jira)' : ''}">${esc(t.ref)}</span>` : ''}${typeChip(t.type)}<span class="ps ps-${esc(t.planStatus)}">● plan ${esc(t.planStatus)}</span></div>
         <div class="title">${esc(t.title)}</div>
         ${t.progress ? `<div class="prog" title="${t.progress.done} of ${t.progress.total} tasks done${t.progress.stale ? ' (plan changed since tasks were made)' : ''}"><div class="bar"><i style="width:${Math.round(100 * t.progress.done / t.progress.total)}%"></i></div><span>${t.progress.done}/${t.progress.total}${t.progress.stale ? ' ⚠' : ''}</span></div>` : ''}
         ${t.branch ? `<div class="branch">⎇ ${esc(t.branch)}</div>` : t.plannedBranch ? `<div class="branch" style="opacity:.7" title="Planned, not created yet">⎇ ${esc(t.plannedBranch)} · planned</div>` : ''}
@@ -436,6 +442,19 @@ async function loadTicket(id, quiet) {
   $('#dPriority').value = t.priority;
   $('#dPlanStatus').value = t.planStatus;
   if (document.activeElement !== $('#dLabels')) $('#dLabels').value = (t.labels || []).join(', ');
+  if (document.activeElement !== $('#dRef')) $('#dRef').value = t.ref || '';
+  $('#dJira').innerHTML = t.jira
+    ? `<a href="${esc(t.jira.url)}" target="_blank" rel="noopener noreferrer">${esc(t.jira.key)}</a>${t.jira.status ? ` · ${esc(t.jira.status)}` : ''}<br>`
+      + `${t.jira.refreshed ? `${esc(t.jira.comments)} comments, read ${esc(t.jira.refreshed.slice(0, 10))}` : 'not imported yet'} · <a href="#" id="dJiraSync">${t.jira.refreshed ? 'Refresh' : 'Import'} with Claude</a>`
+    : '<a href="#" id="dJiraLink">Link a Jira issue</a>';
+  if ($('#dJiraSync')) $('#dJiraSync').onclick = e => { e.preventDefault(); openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `${t.jira.refreshed ? 'refresh' : 'import'} ${t.jira.key} from Jira`); };
+  if ($('#dJiraLink')) $('#dJiraLink').onclick = async e => {
+    e.preventDefault();
+    const url = prompt('Jira issue link (https://yourorg.atlassian.net/browse/ABC-123):');
+    if (!url || !url.trim()) return;
+    try { await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/jira`, { url: url.trim() }); await loadTicket(t.id); openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, 'import it from Jira'); }
+    catch (err) { toast(err.message); }
+  };
   $('#dBranch').innerHTML = t.branch ? `<code>${esc(t.branch)}</code> ${t.worktree ? `<br>${esc(t.worktree)}` : ''}`
     : t.plannedBranch ? `Planned: <code>${esc(t.plannedBranch)}</code> (created when you start work)` : 'Not started';
   if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span>${S.config.pr?.gh === 'off' ? '' : ' <a href="#" id="dPrRefresh">refresh</a>'}`;
@@ -616,6 +635,7 @@ $('#dTitle').onchange = () => patch({ title: $('#dTitle').value });
 $('#dType').onchange = () => patch({ type: $('#dType').value });
 $('#dColumn').onchange = () => patch({ column: $('#dColumn').value });
 $('#dPriority').onchange = () => patch({ priority: $('#dPriority').value });
+$('#dRef').onchange = () => patch({ ref: $('#dRef').value.trim() || null });
 $('#dLabels').onchange = () => patch({ labels: $('#dLabels').value.split(',').map(s => s.trim()).filter(Boolean) });
 $('#tabs').onclick = e => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; renderSide(); } };
 $('#planEdit').onclick = async () => {
@@ -834,7 +854,7 @@ function makePicker(root, { modes, fetchOptions, needsInput }) {
   async function refresh() {
     layout();
     const custom = r('custom').value.trim();
-    if (needsInput && !needsInput()) { r('opts').innerHTML = 'Enter a title to see suggested names.'; return; }
+    if (needsInput && !needsInput()) { r('opts').innerHTML = 'Enter a title to see suggested names. With a Jira link and no title, the name is picked after the import.'; return; }
     const mine = ++seq;
     const o = await fetchOptions(custom);
     if (mine !== seq) return; // a newer request is in flight
@@ -906,26 +926,39 @@ function adoptToast(t) {
 const newPicker = makePicker($('#nPicker'), {
   modes: ['later', 'new', 'current', 'adopt'],
   needsInput: () => $('#nTitle').value.trim(),
-  fetchOptions: custom => api('GET', `/api/branch-preview?title=${encodeURIComponent($('#nTitle').value.trim())}&type=${encodeURIComponent($('#nType').value)}&slug=${encodeURIComponent($('#nSlug').value.trim())}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
+  fetchOptions: custom => api('GET', `/api/branch-preview?title=${encodeURIComponent($('#nTitle').value.trim())}&ref=${encodeURIComponent($('#nRef').value.trim())}&type=${encodeURIComponent($('#nType').value)}&slug=${encodeURIComponent($('#nSlug').value.trim())}${custom ? `&pattern=${encodeURIComponent(custom)}` : ''}`)
     .then(o => { $('#nSlug').placeholder = o.autoSlug ? `e.g. ${o.autoSlug}` : ''; return o; })
 });
 $('#nTitle').oninput = () => newPicker.soon();
+$('#nRef').oninput = () => newPicker.soon();
+// A Jira link fills in the number; the title comes from the import.
+$('#nJira').oninput = () => {
+  const m = $('#nJira').value.match(/atlassian\.net\/(?:browse\/|.*[?&]selectedIssue=)([A-Za-z][A-Za-z0-9_]*-\d+)/);
+  if (m && !$('#nRef').value.trim()) $('#nRef').value = m[1].toUpperCase();
+  $('#nTitleHint').textContent = $('#nJira').value.trim() ? '(optional: imported from Jira)' : '';
+  newPicker.soon();
+};
 $('#nSlug').oninput = () => newPicker.soon();
 $('#nType').onchange = () => newPicker.refresh();
 $('#btnNew').onclick = () => {
   options($('#nType'), S.config.branch.types, S.config.branch.defaultType);
-  $('#nTitle').value = ''; $('#nDesc').value = ''; $('#nErr').textContent = ''; $('#nSlug').value = ''; $('#nSlug').placeholder = '';
+  $('#nTitle').value = ''; $('#nJira').value = ''; $('#nRef').value = ''; $('#nTitleHint').textContent = ''; $('#nDesc').value = ''; $('#nErr').textContent = ''; $('#nSlug').value = ''; $('#nSlug').placeholder = '';
   newPicker.reset(); newPicker.refresh();
   $('#mNew').classList.add('open'); $('#nTitle').focus();
 };
 $('#nCreate').onclick = async () => {
-  if (!$('#nTitle').value.trim()) return $('#nErr').textContent = 'Title is required';
+  const jiraUrl = $('#nJira').value.trim();
+  if (!$('#nTitle').value.trim() && !jiraUrl) return $('#nErr').textContent = 'Title is required (or a Jira link)';
   let branch;
-  try { branch = newPicker.value(); } catch (msg) { return $('#nErr').textContent = msg; }
+  // Jira link without a title: the branch name is picked after the import, when the title is known.
+  if (jiraUrl && !$('#nTitle').value.trim()) branch = { branchMode: 'later' };
+  else try { branch = newPicker.value(); } catch (msg) { return $('#nErr').textContent = msg; }
   $('#nCreate').disabled = true;
   try {
-    const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, slug: $('#nSlug').value.trim() || null, ...branch });
+    const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, slug: $('#nSlug').value.trim() || null,
+      ref: $('#nRef').value.trim() || null, jiraUrl: jiraUrl || null, ...branch });
     $('#mNew').classList.remove('open'); await load(); openTicket(t.id);
+    if (t.jira) { openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `import ${t.jira.key} from Jira`); return; }
     toast(t.warning || adoptToast(t) || (t.branch ? `${t.id} on ${t.branch}` : `${t.id} created${t.plannedBranch ? `, branch ${t.plannedBranch} saved for later` : ''}`));
   } catch (e) { $('#nErr').textContent = e.message; }
   $('#nCreate').disabled = false;

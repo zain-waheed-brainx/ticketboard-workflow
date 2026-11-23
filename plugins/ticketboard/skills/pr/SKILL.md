@@ -27,7 +27,7 @@ Pick the ticket from the arguments, or with `board which`. Then pick the step:
 1. **Check it's ready:** run `board pr-check <id> --json`.
    - If it's not `ready`, list the `reasons` and stop. Unfinished tasks, a failed or missing `test-all`, or uncommitted work go back to `/ticketboard:build <id>`.
    - The ticket and code reviews already happened during build, so don't redo them here.
-2. **Write the description.** Keep it minimal: the `title` from pr-check (`<id>: <ticket title>`), and a body of a few lines on what changed, using pr-check's `body` draft (it's built from the commits) and tightening it. If the repo has a PR template (`.github/pull_request_template.md`), fill in only its required parts, briefly. Don't paste the plan.
+2. **Write the description.** Keep it minimal: the `title` from pr-check (`<ticket number or id>: <ticket title>`), and a body of a few lines on what changed, using pr-check's `body` draft (it's built from the commits) and tightening it. If the repo has a PR template (`.github/pull_request_template.md`), fill in only its required parts, briefly. Don't paste the plan.
 3. **Confirm once.** Show the title, body, `<branch> → <base>`, and that it opens **ready for review** (not a draft). Ask with AskUserQuestion: **Push and open the PR** (Recommended), **Edit the description**, or **Cancel**.
 4. **Push.** Run `git -C <wt> push -u origin <branch>`. If the push is rejected, stop and say why. Never force-push without asking.
 5. **Open the PR.**

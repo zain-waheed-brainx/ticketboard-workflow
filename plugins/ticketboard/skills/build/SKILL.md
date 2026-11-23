@@ -60,7 +60,7 @@ Repeat until `board next <id> --json` reports `allDone`.
        3. reading the diff for bugs against the task's spec.
      - Fix what the review finds and re-run the task's test (`board test <id> <T#>`) after any fix.
    - **A blocked commit didn't happen.** If a hook blocks the commit, fix the findings (or resolve them the way the hook asks), re-stage and commit again. Repeat until the commit goes through. If you can't resolve a finding, stop and ask.
-   - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket id and the task (e.g. `<wt> WWL-8 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the ticket id in the subject. Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<id> <T#>: <task title>`.
+   - **Commit message:** stage the files first, then write the message with the `commit-message` skill if it's available. Invoke it with the worktree path, the ticket's number and the task (e.g. `<wt> ABC-1234 T2: <task title>`), so it reads that worktree's staged diff and log, and keep the number in the subject. The number is `ref=` in `board show`; with no ref, use the ticket id (e.g. `WWL-8`). Use only the message text it returns, and run the commit yourself as below. If the skill isn't available, use `<ref or id> <T#>: <task title>`.
    - **Record only the commit that went through:** take the sha with `git -C <wt> rev-parse HEAD` right after a successful commit in the worktree. The board refuses a sha that isn't on the ticket's branch or that the base branch already has.
    - **`per-task`:** commit each task on its own, then record it.
      ```
@@ -89,7 +89,7 @@ When every task is done:
    - Run `git -C <wt> add -A` (check `git status` first, so only this ticket's work goes in).
    - Self code review of the whole staged diff first, without a skill. Fix what you find and re-run `board test-all <id>`.
    - Then the code-review skill or hook runs once, on the whole commit.
-   - Then write the message with the `commit-message` skill as in step 5 (pass the ticket id, its title and the task list). If the skill isn't available, use `<id>: <ticket title>` with a body listing each task (`- T1: …`). Commit with `-F <message file>`, as in step 5. Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
+   - Then write the message with the `commit-message` skill as in step 5 (pass the ticket number, or the id when it has none, its title and the task list). If the skill isn't available, use `<ref or id>: <ticket title>` with a body listing each task (`- T1: …`). Commit with `-F <message file>`, as in step 5. Once it goes through, run `board commit-record <id> $(git -C <wt> rev-parse HEAD)`.
 4. **`none` commit mode:** code-review the ticket's changes and leave them staged. **Never run `git commit`**, in any form. This mode is for repos whose tools would commit generated files (build output, caches, review files) along with the work.
    - **Stage only the ticket's files.** That's the union of every task's `files`, plus any file your ticket reviews accepted as belonging to a task. Stage them by name with `git -C <wt> add -- <file> …`, never with `git add -A` or `git add .`.
    - **Self code review** of the staged diff (`git -C <wt> diff --cached`), without a skill. Fix what you find, re-stage, and re-run `board test-all <id>`.

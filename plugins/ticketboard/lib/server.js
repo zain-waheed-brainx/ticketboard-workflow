@@ -92,10 +92,11 @@ function routes(b) {
       }
     }],
     ['GET', /^\/api\/tickets\/([\w-]+)$/, ([, id]) => ({
-      ticket: b.get(id), plan: b.plan(id), grill: b.grill(id), history: b.history(id), versions: b.versions(id),
+      ticket: b.get(id), jira: b.jira(id), plan: b.plan(id), grill: b.grill(id), history: b.history(id), versions: b.versions(id),
       tasks: b.tasks(id), next: b.nextTasks(id),
       worktreeExists: (t => !!t.worktree && fs.existsSync(t.worktree))(b.get(id))
     })],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/jira$/, ([, id], body) => b.jiraLink(id, body.url, ACTOR)],
     ['PATCH', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)$/, ([, id, tid], body) => b.updateTask(id, tid, body, ACTOR)],
     ['POST', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)\/test$/, ([, id, tid], body) => b.runTaskTest(id, tid, body.phase || 'after', { actor: ACTOR })],
     ['POST', /^\/api\/tickets\/([\w-]+)\/test-all$/, ([, id]) => b.runAllTests(id, { actor: ACTOR })],
@@ -123,7 +124,7 @@ function routes(b) {
     ['POST', /^\/api\/tickets\/([\w-]+)\/share$/, ([, id], body) => b.share(id, body.on !== false, ACTOR)],
     ['GET', /^\/api\/tickets\/([\w-]+)\/branches$/, ([, id], body, q) => b.branchOptions(id, q.get('type') || undefined, q.get('pattern'), q.has('slug') ? q.get('slug') : undefined)],
     ['GET', /^\/api\/branch-preview$/, (m, body, q) =>
-      b.branchOptionsDraft({ title: q.get('title') || '', type: q.get('type') || undefined, slug: q.get('slug') || undefined }, q.get('pattern'))],
+      b.branchOptionsDraft({ title: q.get('title') || '', type: q.get('type') || undefined, slug: q.get('slug') || undefined, ref: q.get('ref') || undefined }, q.get('pattern'))],
     ['POST', /^\/api\/tickets\/([\w-]+)\/start$/, ([, id], body) => {
       if (body.savePattern) b.savePattern(body.savePattern, true);
       const t = b.start(id, { ...body, actor: ACTOR });

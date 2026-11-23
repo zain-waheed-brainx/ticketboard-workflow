@@ -154,6 +154,18 @@ Examples:
   - **use the current branch**;
   - **move your current work into a worktree**, if the main folder already has work in progress. The branch, its commits and its uncommitted files move to a new worktree, and the main folder goes back to the base branch.
 
+**Ticket number.** Any ticket can carry its number from your tracker (e.g. `ABC-1234`): **Ticket number** on the board, `--ref` on `board new`, or `board set <id> ref=ABC-1234`. It's shown on the card and used in:
+- branch names: `fix/ABC-1234-login-redirect` (or wherever `{ref}` sits in a custom pattern);
+- commit subjects, e.g. `ABC-1234 T2: …`;
+- the PR title, e.g. `ABC-1234: Fix login redirect`.
+
+**From Jira (Cloud).** Paste the issue link in **Jira link** on the New ticket form (or `/ticketboard:ticket new <link>`). The number fills in, and a Claude session opens with `/ticketboard:ticket jira <id>` (press Enter). Claude reads the issue through **Claude's Atlassian connector** (connect it once in Claude's settings; no token is stored), then:
+- saves the issue, its status and all comments on the ticket;
+- rewrites the title and description from the issue **and its comments** (later comments win), with a "Changes from comments" list;
+- keeps the original Jira title and description, and every earlier snapshot (in `jira-versions/`).
+
+**Import / Refresh with Claude** on the ticket reads it again later. Only new comments are considered, and if they affect an existing plan, Claude says which part and offers to update it. Jira data stays in `.board/`, which is never committed.
+
 ### 2. Plan it
 `/ticketboard:ticket plan <id>` offers three ways to plan:
 - **Grill me (new plan).** Claude reads the ticket and the code, then asks only what changes the plan: up to 4 related questions per screen, each with 2-4 concrete options and its recommendation first. Each answer is logged, and the plan document fills in live beside the questions on the board. If you answer "No preference", Claude takes the recommended option and marks it *(Claude's call)*. Small points become "Assumed: …" lines in the plan that you can edit.
@@ -408,7 +420,7 @@ The skills drive a small CLI, `board`, which is on PATH inside Claude sessions t
 | Area | Commands |
 |---|---|
 | Setup | `init [--mode me\|team]`, `mode [me\|team]`, `doctor`, `detect`, `project [show\|write\|trust]`, `bootstrap <id>`, `prefix [NEW]`, `config`, `serve [--port]` |
-| Tickets | `new`, `list`, `show <id>`, `set <id> k=v`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
+| Tickets | `new [--ref N] [--jira LINK]`, `list`, `show <id>`, `set <id> k=v [--desc-file F]`, `jira <id> [--url\|--file]`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
 | Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a`, `prefs`, `pref <topic> "<answer>" [--how asked\|confirmed\|set]`, `pref-forget <topic>` |
 | Branches | `suggest "<title>"`, `branches <id>`, `start <id> [--branch\|--current] [--base]`, `pattern save`, `type add` |
 | Run the app | `run <id> [--replace]`, `run --status\|--stop`, `run --log <id>`, `run-url [URL\|--clear]` |

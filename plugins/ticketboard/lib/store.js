@@ -187,6 +187,25 @@ function projectInitials(root) {
 const ID_PREFIX_RE = /^[A-Z][A-Z0-9]{0,9}$/;
 const MODES = ['me', 'team'];
 
+// The ticket's number in your tracker (Jira ABC-1234, or any other system's). Branch-safe, at most 40 characters.
+function cleanRef(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const r = String(v).trim().replace(/^#/, '');
+  if (!r) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(r) || r.includes('..')) throw new Error(`Ticket number "${v}": use letters, digits, ".", "_" or "-" (e.g. ABC-1234)`);
+  return r;
+}
+
+// A Jira Cloud issue link: https://<site>.atlassian.net/browse/ABC-123 (or a board link with selectedIssue=ABC-123).
+function parseJira(url) {
+  let u;
+  try { u = new URL(String(url || '').trim()); } catch { throw new Error('Not a link: paste the Jira issue URL, e.g. https://yourorg.atlassian.net/browse/ABC-123'); }
+  if (u.protocol !== 'https:' || !/^[a-z0-9-]+\.atlassian\.net$/i.test(u.hostname)) throw new Error('Only Jira Cloud links (https://<site>.atlassian.net/...) are supported');
+  const key = ((u.pathname.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i) || [])[1] || u.searchParams.get('selectedIssue') || '').toUpperCase();
+  if (!/^[A-Z][A-Z0-9_]*-\d+$/.test(key)) throw new Error('No issue key in that link (expected .../browse/ABC-123)');
+  return { key, site: u.hostname.toLowerCase(), url: `https://${u.hostname.toLowerCase()}/browse/${key}` };
+}
+
 // A short name typed by you or suggested by Claude: lowercase words joined by '-', at most 50 characters.
 function cleanSlug(v) {
   const words = slugify(v || '', 200).split('-').filter(Boolean);
@@ -486,8 +505,11 @@ class Board {
       .split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   }
 
-  create({ title, type, description = '', priority = 'medium', labels = [], plannedBranch = null, slug = null }, actor) {
+  create({ title, type, description = '', priority = 'medium', labels = [], plannedBranch = null, slug = null, ref = null, jiraUrl = null }, actor) {
     this.ensure();
+    const jira = jiraUrl ? parseJira(jiraUrl) : null;
+    ref = cleanRef(ref) || jira?.key || null;
+    if ((!title || !String(title).trim()) && jira) title = jira.key; // filled in by the import
     if (!title || !String(title).trim()) throw new Error('Title is required');
     if (plannedBranch && !this.validBranch(plannedBranch)) throw new Error(`Invalid branch name: ${plannedBranch}`);
     const c = this.config();
@@ -502,6 +524,7 @@ class Board {
     const t = {
       id, title, type: type || c.branch.defaultType, description, priority, labels,
       column: 'backlog', planStatus: 'none', planSource: null,
+      ref, ...(jira ? { jira: { ...jira, linked: now() } } : {}),
       plannedBranch, slug: cleanSlug(slug), branch: null, baseBranch: null, worktree: null, shared: false, sharedPath: null,
       sessions: [], created: now(), updated: now()
     };
@@ -515,8 +538,10 @@ class Board {
 
   update(id, patch, actor) {
     const t = this.get(id);
-    const allowed = ['title', 'type', 'description', 'priority', 'labels', 'column', 'planStatus', 'baseBranch', 'plannedBranch', 'slug'];
+    const allowed = ['title', 'type', 'description', 'priority', 'labels', 'column', 'planStatus', 'baseBranch', 'plannedBranch', 'slug', 'ref'];
     if (patch.slug !== undefined) patch = { ...patch, slug: cleanSlug(patch.slug) };
+    if (patch.ref !== undefined) patch = { ...patch, ref: cleanRef(patch.ref) };
+    if (patch.title !== undefined && !String(patch.title).trim()) throw new Error('Title is required');
     if (patch.plannedBranch && !this.validBranch(patch.plannedBranch)) throw new Error(`Invalid branch name: ${patch.plannedBranch}`);
     if (patch.baseBranch) this.checkBase(patch.baseBranch);
     const changes = {};
@@ -924,7 +949,13 @@ class Board {
     pattern = pattern || this.defaultPattern(c);
     const user = slugify((tryGit(['config', 'user.name'], this.root) || 'me').split(' ')[0], 20);
     const ty = type || t.type;
-    const vals = { type: c.branch.typeKeys[ty] || ty, id: t.id.toLowerCase(), ID: t.id, slug: this.slugFor(t), user, date: now().slice(0, 10) };
+    // The ticket number (ABC-1234) goes where {ref} is, else in front of {slug}; with no number, {ref} and the
+    // separator next to it disappear.
+    const slug = this.slugFor(t);
+    const hasRef = pattern.includes('{ref}');
+    if (hasRef && !t.ref) pattern = pattern.replace(/\{ref\}[-_.]?|[-_.]?\{ref\}/g, '').replace(/\/{2,}/g, '/').replace(/^\/|\/$/g, '');
+    const vals = { type: c.branch.typeKeys[ty] || ty, id: t.id.toLowerCase(), ID: t.id, ref: t.ref || '', user, date: now().slice(0, 10),
+      slug: t.ref && !hasRef ? `${t.ref}-${slug}` : slug };
     return pattern.replace(/\{(\w+)\}/g, (m, k) => vals[k] ?? m);
   }
 
@@ -939,9 +970,11 @@ class Board {
   }
 
   // Suggestions for a ticket that doesn't exist yet (the New ticket popup): uses the next id.
-  branchOptionsDraft({ title = '', type, slug } = {}, pattern) {
+  branchOptionsDraft({ title = '', type, slug, ref } = {}, pattern) {
     const c = this.config();
-    return this.branchOptionsFor({ id: `${c.idPrefix}-${c.nextId}`, title: title || 'untitled', type: type || c.branch.defaultType, slug: cleanSlug(slug) }, type, pattern);
+    let r = null;
+    try { r = cleanRef(ref); } catch {} // still being typed: preview without it
+    return this.branchOptionsFor({ id: `${c.idPrefix}-${c.nextId}`, title: title || 'untitled', type: type || c.branch.defaultType, slug: cleanSlug(slug), ref: r }, type, pattern);
   }
 
   branchOptionsFor(t, type, pattern) {
@@ -1302,6 +1335,8 @@ class Board {
       `branch=${t.branch || (t.plannedBranch ? `${t.plannedBranch} (planned, not created)` : '-')} worktree=${t.worktree || '-'}${t.shared ? ` shared=${t.sharedPath}` : ''}`,
       t.round > 1 ? `round=${t.round} (reopened: ${t.reopenReason})` : '',
       t.pr ? `pr=#${t.pr.number} ${t.pr.state}${t.pr.url ? ` ${t.pr.url}` : ''}` : '',
+      t.ref ? `ref=${t.ref} (the ticket number: use it in commit subjects and the PR title)` : '',
+      t.jira ? `jira=${t.jira.url}${t.jira.status ? ` status=${t.jira.status}` : ''}${t.jira.refreshed ? ` refreshed=${t.jira.refreshed.slice(0, 16)} comments=${t.jira.comments}` : ' (not imported yet)'} snapshot=${this.jiraFile(t.id)}` : '',
       t.description ? `\n## Description\n${t.description}` : '',
       `\n## Plan\n${this.plan(t.id).trim() || '(no plan yet)'}`,
       this.tasksSummary(t.id),
@@ -1383,7 +1418,7 @@ class Board {
       upstream, unpushed, pushed: !!upstream && unpushed === 0, gh: this.hasGh(), ghMode: this.config().pr.gh, pr: t.pr || null,
       compareUrl: t.branch ? this.compareUrl(base, t.branch) : null,
       // Minimal description: the title plus a few lines of what changed.
-      title: `${t.id}: ${t.title}${round > 1 ? ` (round ${round})` : ''}`,
+      title: `${t.ref || t.id}: ${t.title}${round > 1 ? ` (round ${round})` : ''}`,
       body: [...commits.slice(0, 8).reverse().map(c => `- ${c}`), commits.length > 8 ? `- …and ${commits.length - 8} more` : '', '', `Ticket: ${t.id}${round > 1 ? `, round ${round}` : ''}`]
         .filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n').trim()
     };
@@ -1700,6 +1735,62 @@ class Board {
     await new Promise(res => setTimeout(res, 1500)); // let an instant failure (bad command, missing vendor/) show
     return this.runState();
   }
+
+  // ---------- Jira ----------
+  // Claude fetches the issue through its Atlassian connector and hands the board a snapshot; the board keeps the
+  // latest in tickets/<id>/jira.json, every earlier one in versions/, and the issue's original title and
+  // description on the ticket, so rewrites from comments never lose what Jira said.
+  jiraLink(id, url, actor) {
+    const t = this.get(id);
+    const j = parseJira(url);
+    const old = isObj(t.jira) ? t.jira : null;
+    const same = old?.key === j.key;
+    // Linking another issue starts over (its own original text); a number that was the old key follows the link.
+    t.jira = { ...(same ? old : {}), ...j, linked: same ? old.linked : now() };
+    if (!t.ref || (old && !same && t.ref === old.key)) t.ref = j.key;
+    this.save(t);
+    this.log(t.id, 'jira-linked', { key: j.key }, actor);
+    return t;
+  }
+
+  jiraFile(id) { return path.join(this.tdir(id), 'jira.json'); }
+
+  jiraSave(id, data, actor) {
+    const t = this.get(id);
+    if (!isObj(data)) throw new Error('A Jira snapshot is a JSON object: {key, title, description, status, comments: [{id, author, created, body}]}');
+    if (data.url && !t.jira) this.jiraLink(t.id, data.url, actor);
+    else if (data.url && parseJira(data.url).key !== t.jira.key) {
+      throw new Error(`Snapshot is for ${parseJira(data.url).key}, but ${t.id} is linked to ${t.jira.key}. To switch issues: board jira ${t.id} --url <link>`);
+    }
+    const cur = this.get(t.id);
+    if (!cur.jira) throw new Error(`${t.id} has no Jira link: board jira ${t.id} --url <issue link>`);
+    if (data.key && String(data.key).toUpperCase() !== cur.jira.key) throw new Error(`Snapshot is for ${data.key}, but ${t.id} is linked to ${cur.jira.key}`);
+    const str = (v, max) => String(v ?? '').slice(0, max);
+    const comments = (Array.isArray(data.comments) ? data.comments : []).filter(isObj).slice(0, 500).map(c => ({
+      id: str(c.id, 40), author: str(c.author, 120), created: str(c.created, 40), body: str(c.body, 20000)
+    }));
+    const snap = { key: cur.jira.key, url: cur.jira.url, fetched: now(), title: str(data.title, 500), description: str(data.description, 100000),
+      status: str(data.status, 60), comments };
+    if (!snap.title) throw new Error('The snapshot needs the issue title');
+    const prev = readJSON(this.jiraFile(t.id), null);
+    const sig = c => c.id || `${c.author}|${c.created}|${c.body.slice(0, 200)}`;
+    const seen = new Set((prev?.comments || []).map(sig));
+    const newComments = comments.filter(c => !seen.has(sig(c)));
+    const changed = !prev || prev.title !== snap.title || prev.description !== snap.description || prev.status !== snap.status;
+    if (prev) { // earlier snapshots: their own folder, apart from plan versions
+      const dir = path.join(this.tdir(t.id), 'jira-versions');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(this.jiraFile(t.id), path.join(dir, `jira-${String(prev.fetched || now()).replace(/[:.]/g, '-')}.json`));
+    }
+    writeJSON(this.jiraFile(t.id), snap);
+    cur.jira = { ...cur.jira, status: snap.status, refreshed: snap.fetched, comments: comments.length,
+      ...(cur.jira.original ? {} : { original: { title: snap.title, description: snap.description } }) };
+    this.save(cur);
+    this.log(t.id, prev ? 'jira-refreshed' : 'jira-imported', { key: cur.jira.key, newComments: newComments.length, changed }, actor);
+    return { first: !prev, issueChanged: changed, newComments, comments: comments.length, file: this.jiraFile(t.id), ticket: cur };
+  }
+
+  jira(id) { return readJSON(this.jiraFile(this.resolveId(id)), null); }
 
   // ---------- planning preferences ----------
   // Answers to general questions ("validation in Form Request classes", "feature tests") are remembered per topic, so

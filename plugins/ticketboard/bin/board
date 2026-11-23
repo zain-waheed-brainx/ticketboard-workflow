@@ -13,11 +13,11 @@ const HELP = `board <command>
   detect [--json] [--root DIR]          propose a project profile from the repo's files (writes nothing)
   project [show|write [--file F]|trust] project profile (.board/project.json, or ticketboard.project.json in team mode)
   bootstrap <id>                        (re)run worktree setup: copy files, launch.json, setup commands
-  new "<title>" [--type T] [--desc D] [--priority P] [--slug S] [--branch B] [--start | --current] [--no-worktree]
+  new "<title>" [--type T] [--desc D] [--priority P] [--slug S] [--ref ABC-1234] [--jira LINK] [--branch B] [--start | --current] [--no-worktree]
                                         --slug: short name for {slug} in branch names (else made from the title)
                                         --branch saves a planned name; --start creates it (+ worktree) now;
                                         --adopt moves the main checkout's current work into its worktree
-  suggest "<title>" [--type T] [--slug S] [--pattern P]   branch name suggestions before the ticket exists
+  suggest "<title>" [--type T] [--slug S] [--ref ABC-1234] [--pattern P]   branch name suggestions before the ticket exists
   list [--json]                         all tickets
   show <id>                             full resume context (plan, decisions, git, history)
   work [--json]                         what's in progress in the main checkout (branch, commits, changes)
@@ -26,7 +26,9 @@ const HELP = `board <command>
   resume [id] [--fix switch|recreate] [--print]   terminal alternative to /ticketboard:resume: starts Claude there
   prepare <id> [--fix switch|recreate] [--json]   where to work: existing worktree, or main checkout (switch only if clean)
   which                                 ticket for the current branch
-  set <id> key=value ...                title, type, priority, labels=a,b, column, description, slug (short name for branches)
+  set <id> key=value ... [--desc-file F]  title, type, priority, labels=a,b, column, description, slug (short name for
+                                        branches), ref (ticket number, e.g. ABC-1234; ref= clears it)
+  jira <id> [--url LINK | --file SNAPSHOT.json] [--json]   link a Jira Cloud issue, save what Claude fetched, or show it
   move <id> <column>
   plan <id> [--file F] [--source grill|imported] [--note N]   write plan (stdin if no --file)
   plan-status <id> <none|drafting|needs-validation|validated|tasks-ready|approved>
@@ -173,8 +175,10 @@ async function main() {
     }
     case 'new': {
       const plannedBranch = typeof flags.branch === 'string' ? flags.branch : null;
-      let t = b.create({ title: pos.join(' '), type: flags.type, description: flags.desc || '', priority: flags.priority || 'medium', plannedBranch, slug: typeof flags.slug === 'string' ? flags.slug : null });
-      let msg = `${t.id} created: ${t.title} [${t.type}]${plannedBranch ? `, planned branch ${plannedBranch}` : ''}`;
+      const str = v => (typeof v === 'string' ? v : null);
+      let t = b.create({ title: pos.join(' '), type: flags.type, description: flags.desc || '', priority: flags.priority || 'medium', plannedBranch,
+        slug: str(flags.slug), ref: str(flags.ref), jiraUrl: str(flags.jira) });
+      let msg = `${t.id} created: ${t.title} [${t.type}]${t.ref ? ` #${t.ref}` : ''}${plannedBranch ? `, planned branch ${plannedBranch}` : ''}`;
       if (flags.adopt) {
         out(msg);
         const r = b.adopt(t.id, { branch: plannedBranch || undefined });
@@ -191,7 +195,7 @@ async function main() {
       return;
     }
     case 'suggest': {
-      const o = b.branchOptionsDraft({ title: pos.join(' '), type: flags.type, slug: typeof flags.slug === 'string' ? flags.slug : undefined }, flags.pattern);
+      const o = b.branchOptionsDraft({ title: pos.join(' '), type: flags.type, slug: typeof flags.slug === 'string' ? flags.slug : undefined, ref: typeof flags.ref === 'string' ? flags.ref : undefined }, flags.pattern);
       if (flags.json) return out(o, true);
       return out([`current: ${o.current || '(detached)'}`, `slug: ${o.slug}${o.customSlug ? ' (short name given)' : ' (from the title)'}`,
         ...o.options.map(x => `${x.isDefault ? '*' : ' '} ${x.name.padEnd(50)} ${x.pattern}${x.valid ? '' : '  INVALID'}${x.exists ? '  EXISTS' : ''}`),
@@ -216,8 +220,20 @@ async function main() {
         const k = kv.slice(0, i), v = kv.slice(i + 1);
         patch[k] = k === 'labels' ? v.split(',').map(s => s.trim()).filter(Boolean) : v;
       }
+      if (typeof flags['desc-file'] === 'string') patch.description = fs.readFileSync(flags['desc-file'], 'utf8').trim();
       const t = b.update(pos[0], patch);
       return out(`${t.id} updated`);
+    }
+    case 'jira': {
+      if (typeof flags.url === 'string') { const t = b.jiraLink(pos[0], flags.url); return out(`${t.id} linked to ${t.jira.url} (number ${t.ref})`); }
+      if (typeof flags.file === 'string') {
+        const r = b.jiraSave(pos[0], JSON.parse(fs.readFileSync(flags.file, 'utf8')));
+        if (flags.json) return out({ ...r, ticket: undefined }, true);
+        return out(`${r.ticket.id}: ${r.first ? 'imported' : 'refreshed'} ${r.ticket.jira.key}, ${r.comments} comment(s), ${r.newComments.length} new${r.issueChanged ? ', issue text changed' : ''}\nsnapshot: ${r.file}`);
+      }
+      const t = b.get(pos[0]);
+      if (!t.jira) return out(`${t.id} has no Jira link. Link one: board jira ${t.id} --url <issue link>`);
+      return out(flags.json ? { link: t.jira, snapshot: b.jira(t.id) } : `${t.id} -> ${t.jira.url}${t.jira.refreshed ? ` (refreshed ${t.jira.refreshed.slice(0, 16)}, ${t.jira.comments} comments)` : ' (not imported yet)'}`, flags.json);
     }
     case 'move': return out(`${b.update(pos[0], { column: pos[1] }).id} -> ${pos[1]}`);
     case 'plan': {
