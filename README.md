@@ -159,12 +159,15 @@ Examples:
 - commit subjects, e.g. `ABC-1234 T2: …`;
 - the PR title, e.g. `ABC-1234: Fix login redirect`.
 
-**From Jira (Cloud).** Paste the issue link in **Jira link** on the New ticket form (or `/ticketboard:ticket new <link>`). The number fills in, and a Claude session opens with `/ticketboard:ticket jira <id>` (press Enter). Claude reads the issue through **Claude's Atlassian connector** (connect it once in Claude's settings; no token is stored), then:
-- saves the issue, its status and all comments on the ticket;
-- rewrites the title and description from the issue **and its comments** (later comments win), with a "Changes from comments" list;
-- keeps the original Jira title and description, and every earlier snapshot (in `jira-versions/`).
+**From Jira (Cloud).** Paste the issue link in **Jira link** on the New ticket form and click **Load**. In about 20 seconds Claude reads the issue and all its comments through **Claude's Atlassian connector** (connect it once in Claude's settings; no token is stored) and fills in:
+- the ticket number;
+- a title and description rewritten from the issue **and its comments** (later comments win), with a "Changes from comments" list.
 
-**Import / Refresh with Claude** on the ticket reads it again later. Only new comments are considered, and if they affect an existing plan, Claude says which part and offers to update it. Jira data stays in `.board/`, which is never committed.
+On **Create**, the issue, its status and comments are saved with the ticket, and the original Jira title and description are kept, with every earlier snapshot (in `jira-versions/`). Creating without Load reads it right after. **Refresh from Jira** on the ticket reads it again and updates the title and description.
+
+How it reads Jira: the board runs `claude -p` with your settings' allow rules not loaded, every built-in tool except ToolSearch denied, the connector's read tools pre-approved and its write tools denied, on your Claude login and usage. Refreshing asks first, and the replaced text stays in the ticket's history. If your connector has another name, set `TICKETBOARD_ATLASSIAN_MCP`. In chat, `/ticketboard:ticket jira <id>` does the same and also checks the plan against new comments.
+
+Jira data stays in `.board/`, which is never committed.
 
 ### 2. Plan it
 `/ticketboard:ticket plan <id>` offers three ways to plan:

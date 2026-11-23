@@ -195,7 +195,8 @@ body.noscroll { overflow: hidden; }
 <div class="modal" id="mNew"><div class="mbox">
   <h3>New ticket</h3>
   <label>Jira link <span class="hint">(optional: Claude imports the title, description and comments)</span></label>
-  <input id="nJira" class="w100" autocomplete="off" placeholder="https://yourorg.atlassian.net/browse/ABC-123">
+  <div style="display:flex;gap:6px"><input id="nJira" style="flex:1" autocomplete="off" placeholder="https://yourorg.atlassian.net/browse/ABC-123"><button id="nJiraLoad" title="Claude reads the issue and its comments through your Atlassian connector (about 20 seconds)">Load</button></div>
+  <div class="hint" id="nJiraMsg"></div>
   <label>Title <span class="hint" id="nTitleHint"></span></label><input id="nTitle" class="w100" placeholder="e.g. Add CSV export to reports">
   <label>Ticket number <span class="hint">(optional, e.g. ABC-1234: used in branch names, commits and the PR title)</span></label>
   <input id="nRef" class="w100" autocomplete="off" maxlength="40">
@@ -445,14 +446,27 @@ async function loadTicket(id, quiet) {
   if (document.activeElement !== $('#dRef')) $('#dRef').value = t.ref || '';
   $('#dJira').innerHTML = t.jira
     ? `<a href="${esc(t.jira.url)}" target="_blank" rel="noopener noreferrer">${esc(t.jira.key)}</a>${t.jira.status ? ` · ${esc(t.jira.status)}` : ''}<br>`
-      + `${t.jira.refreshed ? `${esc(t.jira.comments)} comments, read ${esc(t.jira.refreshed.slice(0, 10))}` : 'not imported yet'} · <a href="#" id="dJiraSync">${t.jira.refreshed ? 'Refresh' : 'Import'} with Claude</a>`
+      + `${t.jira.refreshed ? `${esc(t.jira.comments)} comments, read ${esc(t.jira.refreshed.slice(0, 10))}` : 'not imported yet'} · <a href="#" id="dJiraSync" title="Claude reads the issue and its comments again (about 20 seconds) and updates the title and description">${t.jira.refreshed ? 'Refresh' : 'Load'} from Jira</a>`
     : '<a href="#" id="dJiraLink">Link a Jira issue</a>';
-  if ($('#dJiraSync')) $('#dJiraSync').onclick = e => { e.preventDefault(); openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `${t.jira.refreshed ? 'refresh' : 'import'} ${t.jira.key} from Jira`); };
+  if ($('#dJiraSync')) $('#dJiraSync').onclick = async e => {
+    e.preventDefault();
+    const a = e.target; if (a.dataset.busy) return;
+    if (t.jira.refreshed && !confirm(`Read ${t.jira.key} again and replace this ticket's title and description with an update from Jira and its comments? The current text stays in the ticket's history.`)) return;
+    a.dataset.busy = '1'; a.textContent = 'Reading Jira…';
+    try {
+      const r = await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/jira/refresh`, {});
+      toast(`${t.jira.key}: ${r.comments} comment(s), ${r.newComments.length} new. Title and description updated`);
+      await load();
+    } catch (err) {
+      if (confirm(`${err.message}\n\nImport in a Claude session instead?`)) openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `import ${t.jira.key} from Jira`);
+      await loadTicket(t.id);
+    }
+  };
   if ($('#dJiraLink')) $('#dJiraLink').onclick = async e => {
     e.preventDefault();
     const url = prompt('Jira issue link (https://yourorg.atlassian.net/browse/ABC-123):');
     if (!url || !url.trim()) return;
-    try { await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/jira`, { url: url.trim() }); await loadTicket(t.id); openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, 'import it from Jira'); }
+    try { await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/jira`, { url: url.trim() }); await loadTicket(t.id); $('#dJiraSync')?.click(); }
     catch (err) { toast(err.message); }
   };
   $('#dBranch').innerHTML = t.branch ? `<code>${esc(t.branch)}</code> ${t.worktree ? `<br>${esc(t.worktree)}` : ''}`
@@ -931,6 +945,26 @@ const newPicker = makePicker($('#nPicker'), {
 });
 $('#nTitle').oninput = () => newPicker.soon();
 $('#nRef').oninput = () => newPicker.soon();
+// Load: Claude (headless, Atlassian read tools only) reads the issue and comments; the form gets the title and
+// description rewritten from them, and the raw issue is saved with the ticket on Create.
+let jiraLoaded = null;
+const jiraKeyUrl = u => { const m = String(u || '').match(/^https:\/\/([a-z0-9-]+\.atlassian\.net)\/.*?([A-Za-z][A-Za-z0-9_]*-\d+)/i); return m ? `${m[1].toLowerCase()}/${m[2].toUpperCase()}` : null; };
+$('#nJiraLoad').onclick = async () => {
+  const url = $('#nJira').value.trim();
+  if (!url) return $('#nJiraMsg').textContent = 'Paste the Jira issue link first';
+  if (($('#nTitle').value.trim() || $('#nDesc').value.trim()) && !confirm('Replace the title and description you typed with the ones from Jira?')) return;
+  const btn = $('#nJiraLoad'); btn.disabled = true; btn.textContent = 'Loading…';
+  $('#nJiraMsg').textContent = 'Claude is reading the issue and its comments (about 20 seconds)…';
+  try {
+    const f = await api('POST', '/api/jira/fetch', { url });
+    jiraLoaded = { url: jiraKeyUrl(url), snapshot: { key: f.key, title: f.title, description: f.description, status: f.status, comments: f.comments } };
+    $('#nTitle').value = f.rewrittenTitle; $('#nDesc').value = f.rewrittenDescription;
+    if (!$('#nRef').value.trim()) $('#nRef').value = f.key;
+    $('#nJiraMsg').textContent = `Loaded ${f.key}${f.status ? ` (${f.status})` : ''}: ${f.comments.length} comment(s). Title and description updated from them; the original is kept.`;
+    newPicker.refresh();
+  } catch (e) { $('#nJiraMsg').textContent = e.message; }
+  btn.disabled = false; btn.textContent = 'Load';
+};
 // A Jira link fills in the number; the title comes from the import.
 $('#nJira').oninput = () => {
   const m = $('#nJira').value.match(/atlassian\.net\/(?:browse\/|.*[?&]selectedIssue=)([A-Za-z][A-Za-z0-9_]*-\d+)/);
@@ -942,6 +976,7 @@ $('#nSlug').oninput = () => newPicker.soon();
 $('#nType').onchange = () => newPicker.refresh();
 $('#btnNew').onclick = () => {
   options($('#nType'), S.config.branch.types, S.config.branch.defaultType);
+  jiraLoaded = null; $('#nJiraMsg').textContent = '';
   $('#nTitle').value = ''; $('#nJira').value = ''; $('#nRef').value = ''; $('#nTitleHint').textContent = ''; $('#nDesc').value = ''; $('#nErr').textContent = ''; $('#nSlug').value = ''; $('#nSlug').placeholder = '';
   newPicker.reset(); newPicker.refresh();
   $('#mNew').classList.add('open'); $('#nTitle').focus();
@@ -956,9 +991,12 @@ $('#nCreate').onclick = async () => {
   $('#nCreate').disabled = true;
   try {
     const t = await api('POST', '/api/tickets', { title: $('#nTitle').value.trim(), type: $('#nType').value, priority: $('#nPriority').value, description: $('#nDesc').value, slug: $('#nSlug').value.trim() || null,
-      ref: $('#nRef').value.trim() || null, jiraUrl: jiraUrl || null, ...branch });
-    $('#mNew').classList.remove('open'); await load(); openTicket(t.id);
-    if (t.jira) { openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `import ${t.jira.key} from Jira`); return; }
+      ref: $('#nRef').value.trim() || null, jiraUrl: jiraUrl || null, ...branch,
+      jiraSnapshot: jiraLoaded && jiraLoaded.url === jiraKeyUrl(jiraUrl) ? jiraLoaded.snapshot : undefined });
+    $('#mNew').classList.remove('open'); await load(); await openTicket(t.id);
+    if (t.warning) { toast(t.warning); return; }
+    // Not loaded in the form: load it now, in the background.
+    if (t.jira && !(jiraLoaded && jiraLoaded.url === jiraKeyUrl(jiraUrl))) { toast(`${t.id} created. Reading ${t.jira.key} from Jira…`); $('#dJiraSync')?.click(); return; }
     toast(t.warning || adoptToast(t) || (t.branch ? `${t.id} on ${t.branch}` : `${t.id} created${t.plannedBranch ? `, branch ${t.plannedBranch} saved for later` : ''}`));
   } catch (e) { $('#nErr').textContent = e.message; }
   $('#nCreate').disabled = false;

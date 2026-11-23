@@ -71,10 +71,16 @@ function routes(b) {
     })],
     // branchMode: 'later' saves the name on the ticket; 'new' creates branch (+ worktree) now; 'current' links the checked-out branch.
     ['POST', /^\/api\/tickets$/, (m, body) => {
-      const { branchMode = 'later', branch, worktree = true, base, savePattern, ...fields } = body;
+      const { branchMode = 'later', branch, worktree = true, base, savePattern, jiraSnapshot, ...fields } = body;
       if (branch && !b.validBranch(branch)) throw new Error(`Invalid branch name: ${branch}`);
       if (savePattern) b.savePattern(savePattern, true);
       const t = b.create({ ...fields, plannedBranch: branchMode === 'current' ? null : branch || null }, ACTOR);
+      // Loaded in the form: saved with the original text. The ticket exists either way, so a bad snapshot is a warning.
+      let jiraWarning = null;
+      if (jiraSnapshot && t.jira) {
+        try { b.jiraSave(t.id, jiraSnapshot, ACTOR); } catch (e) { jiraWarning = `Ticket created, but the Jira data wasn't saved: ${e.message}. Use Load from Jira on the ticket.`; }
+      }
+      if (jiraWarning) return { ...b.get(t.id), warning: jiraWarning };
       if (branchMode === 'later') return t;
       if (branchMode === 'adopt') {
         try {
@@ -96,6 +102,8 @@ function routes(b) {
       tasks: b.tasks(id), next: b.nextTasks(id),
       worktreeExists: (t => !!t.worktree && fs.existsSync(t.worktree))(b.get(id))
     })],
+    ['POST', /^\/api\/jira\/fetch$/, (m, body) => b.jiraFetch(body.url)],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/jira\/refresh$/, ([, id]) => b.jiraRefresh(id, ACTOR)],
     ['POST', /^\/api\/tickets\/([\w-]+)\/jira$/, ([, id], body) => b.jiraLink(id, body.url, ACTOR)],
     ['PATCH', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)$/, ([, id, tid], body) => b.updateTask(id, tid, body, ACTOR)],
     ['POST', /^\/api\/tickets\/([\w-]+)\/tasks\/([\w-]+)\/test$/, ([, id, tid], body) => b.runTaskTest(id, tid, body.phase || 'after', { actor: ACTOR })],
