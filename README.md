@@ -188,6 +188,14 @@ Once the plan is settled, Claude splits it into tasks, usually 3-10. Each task c
 
 Then you **approve the plan and its tasks together**, in chat or with **Approve plan** on the board.
 
+**Approve and start building** (the recommended choice in chat) goes straight on in the same session, with no command to type:
+- it starts the ticket on its planned branch (asks only if no name was saved, or if the main folder has work in progress it could move);
+- it builds every task, stopping only for a real decision or a failure it can't fix;
+- it reviews, then commits only if the commit mode allows it (with **No commits**, it stages and hands over);
+- once the work is committed, it asks once whether to open the PR, and does it there.
+
+**Approve only, build later** keeps the old behaviour.
+
 ### 4. Start work
 `/ticketboard:ticket start <id>`, or **Start work** on the board:
 - creates the branch from the base branch you choose;

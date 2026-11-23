@@ -11,7 +11,7 @@ Use the `board` CLI (the plugin's `bin/` is on PATH; if `board` isn't found, use
 ## 1. Get ready
 1. **Ticket:** use the id from the arguments. Otherwise use `board which`, or ask with AskUserQuestion from `board resumable --json`.
 2. **Plan status:** if it isn't `approved`, say so.
-   - `tasks-ready`: ask to approve now (`board plan-status <id> approved`).
+   - `tasks-ready`: ask to approve now (`board plan-status <id> approved`), then carry straight on.
    - No tasks yet: run the **tasks** step of the `ticketboard:ticket` skill first. Don't build without tasks.
    - Tasks marked STALE: redo the tasks step.
 3. **Started?** If the ticket hasn't been started (no branch), run the `ticketboard:ticket` skill's **start** step. That covers "move my current work into a worktree" too.
@@ -101,4 +101,7 @@ When every task is done:
      - Tell them to commit when they're ready, then run `board commit-record <id> <sha>` (or tell you the sha, and you'll record it).
      - If the repo's commit hook stages everything (e.g. it runs `git add -A`), warn them: it will also add the files left out, unless those are gitignored or removed first.
 5. Summarize in 3-5 lines: tasks done (with commits), the all-tests result, done-when items, anything left.
-6. Say the ticket is ready for a pull request (in `none` mode: once they've committed), offer `/ticketboard:pr <id>`, and stop. Opening the PR, reviewers' comments, and cleanup after the merge are in that skill.
+6. **Carry on to the PR in this session, don't send them to a command.**
+   - **`none` mode:** after the hand-over, wait for them to commit. When they say it's committed (or give the sha), record it with `board commit-record <id> <sha>`.
+   - Then ask once with AskUserQuestion: **Open the PR now** (Recommended) or **Later**. Pushing and opening a PR go outside this machine, so this question stays even in `all` run mode.
+   - On **Open the PR now**, invoke the `ticketboard:pr` skill with the id and follow its **open** step here. On **Later**, say `/ticketboard:pr <id>` picks it up.
