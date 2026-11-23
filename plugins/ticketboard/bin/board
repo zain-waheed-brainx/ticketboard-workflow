@@ -60,6 +60,10 @@ const HELP = `board <command>
   gh auto|off                           use GitHub CLI when installed (auto), or never (off, e.g. org doesn't allow it)
   cleanup <id> [--delete-branch]        after the PR is merged: remove the worktree, move to done (ticket + history stay)
   reopen <id> "<what QA/the client found>" [--type bugfix]   new round: plan section, tasks, branch, worktree, PR
+  run <id> [--replace]                  start the app's dev servers (profile commands.dev) in the ticket's worktree;
+                                        one ticket at a time: --replace stops another ticket's servers first
+  run --status | --stop | --log <id>    what's running, stop it, or show a ticket's server output
+  run-url [URL|--clear]                 page to open for the running app (default http://localhost:<port>)
   prefs [--json]                        planning preferences learned from your answers (apply / suggest / ask)
   pref <topic> "<answer>" [--q Q] [--ticket ID] [--how asked|confirmed|set]   remember an answer
                                         workflow.* topics are shared by all your projects, others stay in this one
@@ -320,6 +324,24 @@ async function main() {
       if (flags.json) return out(r, true);
       if (!r.pr) return out(`${b.resolveId(pos[0])}: no PR recorded`);
       return out(`${b.resolveId(pos[0])}: PR #${r.pr.number} ${r.pr.state}${r.pr.reviewDecision ? `, review: ${r.pr.reviewDecision.toLowerCase()}` : ''}${r.pr.url ? `\n${r.pr.url}` : ''}${r.gh === false ? `\n(${b.config().pr.gh === 'off' ? 'gh is off' : 'gh not installed'}: state is as last recorded; set it with board pr-state)` : ''}${r.error ? `\n(gh: ${r.error})` : ''}`);
+    }
+    case 'run': {
+      const show = s => !s.running && s.id
+        ? `${s.id}'s servers all stopped on their own (${s.crashed.join(', ')}). See why: board run --log ${s.id}`
+        : s.running
+        ? `${s.id} running in ${s.cwd}\n${s.procs.map(p => `  ${p.alive ? 'up  ' : 'DOWN'} ${p.name}: ${p.command}`).join('\n')}${s.node ? `\n${s.node}` : ''}${s.url ? `\nopen: ${s.url}` : ''}`
+        : 'Nothing running';
+      if (flags.stop) { const r = await b.runStop(); return out(r.stopped ? `stopped ${r.stopped}'s servers` : 'Nothing was running'); }
+      if (flags.status || !pos[0] && !flags.log) return out(flags.json ? b.runState() : show(b.runState()), flags.json);
+      if (flags.log) return out(b.runLogTail(typeof flags.log === 'string' ? flags.log : pos[0]) || '(no output yet)');
+      return out(show(await b.runStart(pos[0], { replace: !!flags.replace })) + `\nlog: board run --log ${b.resolveId(pos[0])}`);
+    }
+    case 'run-url': {
+      if (flags.clear) { b.saveConfig({ run: {} }); return out('run url: default (http://localhost:<port>)'); }
+      if (!pos[0]) return out(`run url: ${b.config().run?.url || 'default (http://localhost:<port>)'}`);
+      if (!/^https?:\/\/\S+$/i.test(pos[0])) throw new Error('The URL must start with http:// or https://');
+      b.saveConfig({ run: { url: pos[0] } });
+      return out(`run url: ${pos[0]}`);
     }
     case 'prefs': {
       const ps = b.prefs();

@@ -125,6 +125,8 @@ function detect(root, depth = 0) {
     if (exists(root, 'artisan')) {
       out.stack.push('laravel');
       out.commands.dev.push({ name: 'laravel', command: 'php artisan serve --port=8000', port: 8000, detectedFrom: 'artisan' });
+      const req = { ...composer.require, ...composer['require-dev'] };
+      if (req['laravel/horizon']) out.commands.dev.push({ name: 'horizon', command: 'php artisan horizon', detectedFrom: 'composer.json laravel/horizon' });
       out.commands.test = 'php artisan test';
       if (!exists(root, '.env') && exists(root, '.env.example')) {
         out.worktree.setup.push('cp .env.example .env', 'php artisan key:generate');

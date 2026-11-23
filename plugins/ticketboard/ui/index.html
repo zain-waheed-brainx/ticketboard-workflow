@@ -136,6 +136,7 @@ body.noscroll { overflow: hidden; }
   <h1>Ticketboard</h1>
   <span class="live" id="live" title="Live"></span>
   <span class="repo" id="repo"></span>
+  <span id="runBar" style="display:none;font-size:12px;gap:6px;align-items:center"></span>
   <button id="btnSettings">Settings</button>
   <button class="primary" id="btnNew">+ New ticket</button>
 </header>
@@ -152,6 +153,7 @@ body.noscroll { overflow: hidden; }
         <button id="dShare"></button>
         <button id="dResume" title="Open a new Claude Code session in this ticket's worktree with /ticketboard:resume typed in (press Enter there)">Resume</button>
         <button id="dBuild" class="primary" title="Open a new Claude Code session in this ticket's worktree with /ticketboard:build typed in (press Enter there)">Build</button>
+        <button id="dRun" title="Start this ticket's app (the profile's dev commands) in its worktree for manual checks. Stops any other ticket's servers first.">Run app</button>
         <button id="dPr" title="Check it's ready, push, and open the pull request on GitHub">Open PR</button>
         <button id="dPrMerged" title="Mark the PR as merged (when gh isn't used, the board can't check GitHub)">Mark merged</button>
         <button id="dCleanup" title="PR merged: remove the worktree and move to done. The ticket and its history stay.">Clean up</button>
@@ -232,6 +234,9 @@ body.noscroll { overflow: hidden; }
   <label>Branch types <span class="hint">(branch names use the short key shown)</span></label>
   <div id="cTypes" class="hint"></div>
   <div style="display:flex;gap:6px;margin-top:6px"><input id="cNewType" style="flex:1" placeholder="release"><button id="cAddType">Add type</button></div>
+  <h3 style="margin-top:16px">Run app</h3>
+  <p class="hint">The page <b>Open app</b> goes to while a ticket's servers run, e.g. <code>http://alaska.localhost:8000</code>. Empty: <code>http://localhost:&lt;port&gt;</code>.</p>
+  <div style="display:flex;gap:6px"><input id="cRunUrl" style="flex:1" autocomplete="off" placeholder="http://localhost:8000"><button id="cSaveRunUrl">Save</button></div>
   <h3 style="margin-top:16px">Planning preferences</h3>
   <p class="hint">Learned from your answers while planning. <b>Applied</b> ones aren't asked again (you see them once on the "usual choices" screen), <b>suggested</b> ones are asked with your last answer recommended, <b>asked</b> ones change too often to guess. Editing one here applies it from now on. <i>workflow.*</i> topics are shared by all your projects.</p>
   <div id="cPrefs" class="hint">Loading…</div>
@@ -249,6 +254,12 @@ body.noscroll { overflow: hidden; }
   </div>
   <div class="err" id="xErr"></div>
   <div class="actions"><button data-close>Cancel</button><button class="primary danger" id="xGo" style="background:var(--danger);border-color:var(--danger);color:#fff">Delete</button></div>
+</div></div>
+
+<div class="modal" id="mRunLog"><div class="mbox" style="max-width:900px;width:100%">
+  <h3>Server output <code id="rlId"></code></h3>
+  <pre id="rlText" style="max-height:60vh;overflow:auto;font-size:11px;white-space:pre-wrap;background:var(--panel2);padding:8px;border-radius:6px"></pre>
+  <div class="actions"><button data-close>Close</button></div>
 </div></div>
 
 <div class="modal" id="mPr"><div class="mbox">
@@ -302,8 +313,73 @@ function typeChip(t) { return `<span class="chip t-${esc(t)}">${esc(t)}</span>`;
 function when(ts) { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function options(sel, list, val) { sel.innerHTML = list.map(x => `<option ${x === val ? 'selected' : ''}>${esc(x)}</option>`).join(''); }
 
+// ---- run app (one ticket at a time) ----
+let RUN = { running: false };
+function renderRunBar() {
+  const bar = $('#runBar');
+  if (!RUN.id) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  if (!RUN.running) {
+    bar.innerHTML = `<span class="chip" style="color:var(--danger)">■ ${esc(RUN.id)} servers stopped</span> <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Dismiss</a>`;
+    $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
+    $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
+    return;
+  }
+  const down = RUN.crashed?.length ? ` <span style="color:var(--danger)" title="Stopped on its own: check the output">${esc(RUN.crashed.join(', '))} down</span>` : '';
+  bar.innerHTML = `<span class="chip">▶ ${esc(RUN.id)} running</span>${down}`
+    + (RUN.url ? ` <a href="${esc(RUN.url)}" target="_blank" rel="noopener noreferrer">Open app</a>` : '')
+    + ` <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Stop</a>`;
+  $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
+  $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
+}
+function renderRunButton() {
+  if (!openData) return;
+  const t = openData.ticket;
+  const b = $('#dRun');
+  const mine = RUN.running && RUN.id === t.id;
+  b.style.display = openData.worktreeExists && S.project.exists ? '' : 'none';
+  b.textContent = mine ? 'Stop app' : 'Run app';
+}
+async function refreshRun() {
+  if (document.hidden) return; // no polling in a background tab; it catches up when shown
+  try { RUN = await api('GET', '/api/run'); } catch { return; }
+  renderRunBar(); renderRunButton();
+}
+async function stopRun() {
+  try { const r = await api('POST', '/api/run/stop', {}); toast(r.stopped ? `Stopped ${r.stopped}'s servers` : 'Nothing was running'); } catch (e) { toast(e.message); }
+  await refreshRun();
+}
+let runLogTimer = null;
+async function showRunLog(id) {
+  $('#rlId').textContent = id;
+  $('#mRunLog').classList.add('open');
+  const pull = async () => {
+    if (!$('#mRunLog').classList.contains('open')) { clearInterval(runLogTimer); return; }
+    const pre = $('#rlText');
+    const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+    try { pre.textContent = (await api('GET', `/api/tickets/${encodeURIComponent(id)}/run-log`)).log || '(no output yet)'; } catch (e) { pre.textContent = e.message; }
+    if (atEnd) pre.scrollTop = pre.scrollHeight;
+  };
+  clearInterval(runLogTimer); await pull(); runLogTimer = setInterval(pull, 2000);
+}
+$('#dRun').onclick = async () => {
+  const t = openData.ticket;
+  if (RUN.running && RUN.id === t.id) return stopRun();
+  if (RUN.running && !confirm(`${RUN.id}'s servers are running. Stop them and start ${t.id}?`)) return;
+  const b = $('#dRun'); b.disabled = true; b.textContent = 'Starting…';
+  try {
+    RUN = await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/run`, { replace: true });
+    toast(!RUN.running ? 'The servers stopped right away: check the output' : RUN.crashed?.length ? `Started, but ${RUN.crashed.join(', ')} stopped: check the output` : `${t.id} running${RUN.url ? `: ${RUN.url}` : ''}`);
+    if (!RUN.running || RUN.crashed?.length) showRunLog(t.id);
+  } catch (e) { toast(e.message); }
+  b.disabled = false; renderRunBar(); renderRunButton();
+};
+setInterval(refreshRun, 3000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshRun(); });
+
 async function load() {
   S = await api('GET', '/api/state');
+  refreshRun();
   const banner = $('#setupBanner');
   banner.style.display = S.project.exists && S.project.trusted ? 'none' : '';
   banner.innerHTML = !S.project.exists
@@ -365,6 +441,7 @@ async function loadTicket(id, quiet) {
   if (t.pr) $('#dBranch').innerHTML += `<br>PR: ${t.pr.url ? `<a href="${esc(t.pr.url)}" target="_blank" rel="noopener noreferrer">#${esc(t.pr.number)}</a>` : `#${esc(t.pr.number)}`} <span class="chip pr-${esc(t.pr.state)}">${esc(t.pr.state)}</span>${S.config.pr?.gh === 'off' ? '' : ' <a href="#" id="dPrRefresh">refresh</a>'}`;
   if (t.round > 1) $('#dBranch').innerHTML += `<br>Round ${esc(t.round)}: ${esc(t.reopenReason || '')}`;
   $('#dPr').style.display = t.branch && !t.pr ? '' : 'none';
+  renderRunButton();
   const nextUp = openData.next;
   $('#dBuild').style.display = t.branch && t.worktree && buildReady(t, openData.tasks) && !t.pr
     && !(nextUp && nextUp.allDone && openData.tasks.finalRun?.ok) ? '' : 'none';
@@ -956,7 +1033,11 @@ $('#cPrefs').onclick = async e => {
     $('#cErr').textContent = ''; renderPrefs();
   } catch (err) { $('#cErr').textContent = err.message; }
 };
-$('#btnSettings').onclick = () => { renderSettings(); renderPrefs(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
+$('#cSaveRunUrl').onclick = async () => {
+  try { S.config = await api('PUT', '/api/config', { runUrl: $('#cRunUrl').value.trim() }); toast('App URL saved'); $('#cErr').textContent = ''; refreshRun(); }
+  catch (e) { $('#cErr').textContent = e.message; }
+};
+$('#btnSettings').onclick = () => { $('#cRunUrl').value = S.config.run?.url || ''; renderSettings(); renderPrefs(); $('#cErr').textContent = ''; $('#mSettings').classList.add('open'); };
 $('#cAddPattern').onclick = async () => {
   const p = $('#cNewPattern').value.trim();
   if (!p.includes('{')) return $('#cErr').textContent = 'A pattern needs at least one {token}';

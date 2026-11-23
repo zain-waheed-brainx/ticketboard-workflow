@@ -130,6 +130,10 @@ function routes(b) {
       return body.useCurrent ? t : setupInBackground(b, t);
     }],
     ['GET', /^\/api\/tickets\/([\w-]+)\/context$/, ([, id]) => ({ context: b.context(id) })],
+    ['GET', /^\/api\/run$/, () => b.runState()],
+    ['POST', /^\/api\/run\/stop$/, () => b.runStop({ actor: ACTOR })],
+    ['POST', /^\/api\/tickets\/([\w-]+)\/run$/, ([, id], body) => b.runStart(id, { replace: body.replace === true, actor: ACTOR })],
+    ['GET', /^\/api\/tickets\/([\w-]+)\/run-log$/, ([, id]) => ({ log: b.runLogTail(id) })],
     ['GET', /^\/api\/prefs$/, () => b.prefs()],
     // Typed in the board, so it's your explicit choice: applied from now on without asking.
     ['PUT', /^\/api\/prefs\/([\w.-]+)$/, ([, topic], body) => b.prefRecord(topic, body.answer, { how: 'set' })],
@@ -140,6 +144,11 @@ function routes(b) {
       if (body.addType) b.addType(body.addType);
       if (body.savePattern) b.savePattern(body.savePattern, body.makeDefault !== false);
       if (body.branch) b.saveConfig({ branch: body.branch });
+      if (body.runUrl !== undefined) {
+        const u = String(body.runUrl || '').trim();
+        if (u && !/^https?:\/\/[^\s]+$/i.test(u)) throw new Error('The app URL must start with http:// or https://');
+        b.saveConfig({ run: u ? { url: u } : {} });
+      }
       return b.config();
     }]
   ];

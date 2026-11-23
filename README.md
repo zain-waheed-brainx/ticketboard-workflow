@@ -255,6 +255,17 @@ Grilling only covers what's new. Earlier rounds' branches, PRs and tasks stay in
 
 ---
 
+### Run the app for manual checks
+**Run app** on a ticket (or `board run <id>`) starts the project's dev commands in that ticket's worktree, e.g. `php artisan serve --port=8000`, `npm run watch` and `php artisan horizon`.
+- **One ticket at a time.** Starting another ticket stops the running one first, after you confirm. Ports never change, so links stored in the app's database (like `http://alaska.localhost:8000`) keep working.
+- **Header bar:** which ticket runs, **Open app**, **Output** (live log) and **Stop**. If the servers die, it says so.
+- **Open app** goes to `http://localhost:<port>`, or to the URL in Settings → **Run app** (e.g. a tenant subdomain). CLI: `board run-url <URL>`.
+- **Port in use** by something the board didn't start (a `php artisan serve` in a terminal): it refuses and names the process.
+- **Clean up and Delete** stop the ticket's servers first.
+- Commands come from the profile's `commands.dev` and only run once the profile is trusted. Setup detects Horizon when `laravel/horizon` is installed.
+
+**Node version per project.** Run, worktree setup and tests use the Node version the project asks for: `.nvmrc` or `.node-version` in the worktree, else an exact `versions.node` in the profile. It's picked from nvm's installed versions (exact, else the newest with the same major.minor, else the same major) and put first on PATH, so `npm` and `node` use it. If nvm doesn't have it, the command stops and says `nvm install <version>`.
+
 ## The web board
 
 `/ticketboard:board`, or `board serve`, then open http://localhost:4317.
@@ -392,6 +403,7 @@ The skills drive a small CLI, `board`, which is on PATH inside Claude sessions t
 | Tickets | `new`, `list`, `show <id>`, `set <id> k=v`, `move <id> <col>`, `history <id>`, `note <id> "<text>"`, `share <id> [--off]` |
 | Planning | `plan <id> [--file]`, `plan-status <id> <status>`, `grill <id> --q --a`, `prefs`, `pref <topic> "<answer>" [--how asked\|confirmed\|set]`, `pref-forget <topic>` |
 | Branches | `suggest "<title>"`, `branches <id>`, `start <id> [--branch\|--current] [--base]`, `pattern save`, `type add` |
+| Run the app | `run <id> [--replace]`, `run --status\|--stop`, `run --log <id>`, `run-url [URL\|--clear]` |
 | Current work and resume | `work`, `adopt <id>`, `which`, `resumable`, `prepare <id> [--fix switch\|recreate]` |
 | Tasks and tests | `tasks <id>`, `tasks-write <id>`, `task <id> <T#> status=…`, `test <id> <T#> [--before]`, `test-all <id>`, `next <id>`, `build-mode`, `run-mode`, `commit-mode <id> per-task\|single\|none`, `commit-record <id> <sha>`, `done-when <id> <n>` |
 | PR and rounds | `pr-check <id>`, `pr-record <id> <url>`, `pr <id>`, `pr-state <id> open\|merged\|closed`, `gh auto\|off`, `cleanup <id> [--delete-branch]`, `reopen <id> "<reason>" [--type]` |

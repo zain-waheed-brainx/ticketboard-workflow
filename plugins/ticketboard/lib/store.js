@@ -72,12 +72,60 @@ function normTest(t) {
 }
 
 // Run a shell command in cwd; keeps the last 6000 characters of output.
-function runShell(command, cwd, timeoutMs = 15 * 60 * 1000) {
+// Node version the project asks for: .nvmrc or .node-version in the folder, else an exact versions.node in the
+// profile ("18", "18.17.1"; ranges like ">=20" are ignored). Resolved against nvm's installed versions: exact, else
+// the newest with the same major.minor, else the same major. Commands then run with that version's bin first on PATH,
+// so npm/node/npx use it without sourcing nvm. null: nothing asked, or the current node already fits.
+function nodeFor(cwd, profile) {
+  let want = null, from = null;
+  for (const f of ['.nvmrc', '.node-version']) {
+    const v = readText(path.join(cwd, f)).trim();
+    if (v) { want = v; from = f; break; }
+  }
+  if (!want) {
+    const v = String(profile?.versions?.node || '').trim();
+    if (/^v?\d+(\.\d+){0,2}$/.test(v)) { want = v; from = 'the project profile'; }
+  }
+  if (!want) return null;
+  const nvm = process.env.NVM_DIR || path.join(require('os').homedir(), '.nvm');
+  const dir = path.join(nvm, 'versions', 'node');
+  let installed = [];
+  try { installed = fs.readdirSync(dir).filter(v => /^v\d+\.\d+\.\d+$/.test(v)); } catch {}
+  const num = v => v.slice(1).split('.').map(Number);
+  const newest = list => list.sort((a, b) => { const x = num(a), y = num(b); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; })[0];
+  // nvm aliases (lts/*, lts/iron, default, node, stable): follow nvm's alias files; unknown ones keep the current node.
+  const asked = want;
+  for (let i = 0; i < 3 && !/^v?\d+(\.\d+){0,2}$/.test(want); i++) {
+    if (['node', 'stable'].includes(want)) { want = newest([...installed]) || ''; break; }
+    if (!/^[\w*/.-]+$/.test(want) || want.includes('..')) { want = ''; break; }
+    want = readText(path.join(nvm, 'alias', want)).trim();
+  }
+  want = want.replace(/^v/, '');
+  if (!/^\d+(\.\d+){0,2}$/.test(want)) return null;
+  if (asked !== want && !asked.startsWith('v') && asked !== want.replace(/^v/, '')) from = `${from} (${asked})`;
+  const parts = want.split('.');
+  const pick = n => newest(installed.filter(v => num(v).slice(0, n).join('.') === parts.slice(0, n).map(Number).join('.')));
+  const use = pick(parts.length) || (parts.length > 2 && pick(2)) || pick(1);
+  if (use) return { want, from, use, bin: path.join(dir, use, 'bin') };
+  const current = process.version.slice(1).split('.');
+  if (current.slice(0, Math.min(parts.length, 2)).join('.') === parts.slice(0, 2).join('.')) return null;
+  return { want, from, error: `${from} asks for Node ${want}, but nvm doesn't have it (this machine runs ${process.version}). Install it: nvm install ${want}` };
+}
+
+function nodeEnv(node) {
+  return node?.bin ? { PATH: `${node.bin}${path.delimiter}${process.env.PATH || ''}`, NVM_BIN: node.bin } : {};
+}
+
+function nodeNote(node) {
+  return node?.use ? `Node ${node.use} (asked: ${node.want} in ${node.from})` : '';
+}
+
+function runShell(command, cwd, timeoutMs = 15 * 60 * 1000, extraEnv = {}) {
   return new Promise(resolve => {
     const started = Date.now();
     let output = '';
     const keep = s => { output = (output + s).slice(-6000); };
-    const child = spawn(command, { cwd, shell: true, env: { ...process.env, CI: process.env.CI || '1', FORCE_COLOR: '0' } });
+    const child = spawn(command, { cwd, shell: true, env: { ...process.env, CI: process.env.CI || '1', FORCE_COLOR: '0', ...extraEnv } });
     const timer = setTimeout(() => { keep(`\n[timed out after ${Math.round(timeoutMs / 1000)}s]`); child.kill('SIGTERM'); }, timeoutMs);
     child.stdout.on('data', d => keep(String(d)));
     child.stderr.on('data', d => keep(String(d)));
@@ -522,6 +570,7 @@ class Board {
       throw new Error(`Force delete of ${t.id} needs confirm=${t.id}: ${check.reasons.join('; ')}`);
     }
     const done = [];
+    if (this.runStopNow(t.id)) done.push('stopped its servers');
     if (check.worktreeExists && !check.isMain) {
       // --force: without it git refuses to remove the files setup created (.env, launch.json). When the check
       // was safe those are the only extra files; on a confirmed force delete this also discards uncommitted work.
@@ -695,7 +744,7 @@ class Board {
     const x = this.tasks(t.id).tasks.find(y => y.id === taskId);
     if (!x) throw new Error(`Unknown task ${taskId}`);
     if (!x.test.command) return { taskId, manual: x.test.manual, ok: null };
-    const r = await runShell(x.test.command, t.worktree);
+    const r = await runShell(x.test.command, t.worktree, undefined, this.nodeEnvFor(t.worktree).env);
     const ok = phase === 'before' ? !r.passed : r.passed;
     const tk = this.tasks(t.id); // re-read: another run may have written meanwhile
     const y = tk.tasks.find(z => z.id === taskId);
@@ -713,10 +762,11 @@ class Board {
     const t = this.get(id);
     if (!t.worktree || !fs.existsSync(t.worktree)) throw new Error(`${t.id} has no worktree to run tests in`);
     const results = [];
+    const nodeEnvAll = this.nodeEnvFor(t.worktree).env;
     for (const x of this.tasks(t.id).tasks) {
       if (x.status === 'skipped') { results.push({ taskId: x.id, skipped: true }); continue; }
       if (!x.test.command) { results.push({ taskId: x.id, manual: x.test.manual }); continue; }
-      const r = await runShell(x.test.command, t.worktree);
+      const r = await runShell(x.test.command, t.worktree, undefined, nodeEnvAll);
       results.push({ taskId: x.id, passed: r.passed, code: r.code, ms: r.ms, output: r.passed ? '' : r.output });
     }
     const projectCmd = this.profile()?.commands?.test;
@@ -725,7 +775,7 @@ class Board {
     if (projectCmd && !this.trusted()) {
       project = { command: projectCmd, passed: false, skipped: `not run: ${projectFile} changed since you last reviewed it; run board project trust (or /ticketboard:setup)` };
     } else if (projectCmd) {
-      const r = await runShell(projectCmd, t.worktree);
+      const r = await runShell(projectCmd, t.worktree, undefined, nodeEnvAll);
       project = { command: projectCmd, passed: r.passed, code: r.code, ms: r.ms, output: r.passed ? '' : r.output };
     }
     const ok = results.every(r => r.passed !== false) && (!project || project.passed);
@@ -1028,10 +1078,18 @@ class Board {
       generated.push('.claude/launch.json');
       write('wrote .claude/launch.json\n');
     }
+    const node = nodeFor(wt, p);
+    if (node?.error) {
+      write(`\n${node.error}\n`);
+      setStatus('failed', { command: 'node version', code: 1 });
+      this.log(t.id, 'bootstrap-failed', { command: 'node version', code: 1 }, actor);
+      return { failed: 'node version', code: 1, log: logFile };
+    }
+    if (node?.use) write(`using ${nodeNote(node)}\n`);
     for (const cmd of p.worktree?.setup || []) {
       write(`\n$ ${cmd}\n`);
       const code = await new Promise(resolve => {
-        const child = spawn(cmd, { cwd: wt, shell: true, env: { ...process.env, CI: process.env.CI || '1' } });
+        const child = spawn(cmd, { cwd: wt, shell: true, env: { ...process.env, CI: process.env.CI || '1', ...nodeEnv(node) } });
         child.stdout.on('data', d => write(String(d)));
         child.stderr.on('data', d => write(String(d)));
         child.on('close', resolve);
@@ -1426,6 +1484,7 @@ class Board {
     // work no remote has (or uncommitted files) would be lost.
     if (!check.safe) throw new Error(`Not safe to clean up ${t.id}: ${check.reasons.join('; ')}`);
     const done = [];
+    if (this.runStopNow(t.id)) done.push('stopped its servers');
     if (check.worktreeExists && !check.isMain) {
       // --force: only the files setup created (.env, launch.json) are left, which plain remove refuses.
       git(['worktree', 'remove', '--force', t.worktree], this.root);
@@ -1491,6 +1550,155 @@ class Board {
       const pr = r.pr ? ` PR #${r.pr.number} ${r.pr.state}${r.pr.url ? ` ${r.pr.url}` : ''}` : ' no PR';
       return [`Round ${r.round}: ${r.branch || '-'}${pr}`, ...tk.tasks.map(x => `  - ${x.id} ${x.title}${x.commit ? ` @${x.commit.slice(0, 7)}` : ''}`)].join('\n');
     }), `Round ${t.round || 1} (now): ${t.reopenReason || ''}`].join('\n');
+  }
+
+  // Node for commands run in that folder; throws when the project asks for a version this machine doesn't have.
+  nodeEnvFor(cwd) {
+    const n = nodeFor(cwd, this.profile());
+    if (n?.error) throw new Error(n.error);
+    return { env: nodeEnv(n), note: nodeNote(n) };
+  }
+
+  // ---------- run the app for manual checks (one ticket at a time) ----------
+  // Starts the profile's dev commands (php artisan serve, npm run watch, horizon…) in the ticket's worktree, each in
+  // its own process group with output in .board/tickets/<id>/run.log. Only one ticket runs at a time, always on the
+  // profile's ports (8000), so links stored in the app's database keep working. State is in .board/run.json, so the
+  // board can stop them even after it restarts.
+  runFile() { return path.join(this.dir, 'run.json'); }
+  runLog(id) { return path.join(this.tdir(id), 'run.log'); }
+
+  // A saved pid counts only while it's still the process the board started: after a reboot the number can belong
+  // to something else, so its start time must match the one saved at launch.
+  static procStart(pid) {
+    try {
+      const s = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      const ms = Date.parse(s);
+      return Number.isFinite(ms) ? ms : null;
+    } catch { return null; }
+  }
+
+  static alive(p) {
+    if (!Number.isInteger(p.pid) || p.pid <= 1) return false;
+    try { process.kill(p.pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
+    const started = Board.procStart(p.pid);
+    return started !== null && Number.isFinite(p.started) && Math.abs(started - p.started) < 5000;
+  }
+
+  runState() {
+    const r = readJSON(this.runFile(), null);
+    if (!isObj(r) || !Array.isArray(r.procs)) return { running: false };
+    const procs = r.procs.map(p => ({ ...p, alive: Board.alive(p) }));
+    const running = procs.some(p => p.alive);
+    const port = procs.find(p => p.port)?.port;
+    const url = this.config().run?.url || (port ? `http://localhost:${port}` : null);
+    return { running, id: r.id, startedAt: r.startedAt, cwd: r.cwd, node: r.node || null, procs, url, crashed: procs.filter(p => !p.alive).map(p => p.name) };
+  }
+
+  runLogTail(id, bytes = 20000) {
+    const t = this.get(id);
+    const f = this.runLog(t.id);
+    let fd;
+    try {
+      const size = fs.statSync(f).size;
+      fd = fs.openSync(f, 'r');
+      const buf = Buffer.alloc(Math.min(bytes, size));
+      fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+      const text = buf.toString('utf8');
+      return buf.length < size ? text.slice(text.indexOf('\n') + 1) : text; // start on a whole line (no cut character)
+    } catch { return ''; } finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+
+  // Signal every running process group; true if anything was running for that ticket (or any ticket, without id).
+  runSignal(sig, id) {
+    const r = readJSON(this.runFile(), null);
+    if (!isObj(r) || !Array.isArray(r.procs) || (id && r.id !== this.resolveId(id))) return false;
+    let any = false;
+    for (const p of r.procs) {
+      if (!Board.alive(p)) continue;
+      any = true;
+      try { process.kill(-p.pid, sig); } catch {} // its own process group (spawned detached), never anything else
+    }
+    return any;
+  }
+
+  // For cleanup/delete: kill at once, the worktree is about to go.
+  runStopNow(id) {
+    const r = readJSON(this.runFile(), null);
+    if (!isObj(r) || r.id !== this.resolveId(id)) return false;
+    const any = this.runSignal('SIGKILL');
+    fs.rmSync(this.runFile(), { force: true });
+    return any;
+  }
+
+  async runStop({ actor } = {}) {
+    const r = readJSON(this.runFile(), null);
+    if (!isObj(r)) return { stopped: null };
+    this.runSignal('SIGTERM');
+    for (let i = 0; i < 30 && this.runState().running; i++) await new Promise(res => setTimeout(res, 100));
+    this.runSignal('SIGKILL');
+    fs.rmSync(this.runFile(), { force: true });
+    if (r.id && fs.existsSync(this.tdir(r.id))) this.log(r.id, 'servers-stopped', {}, actor);
+    return { stopped: r.id || null };
+  }
+
+  static portBusy(port) {
+    return new Promise(resolve => {
+      const s = require('net').connect({ port, host: '127.0.0.1' });
+      s.setTimeout(500);
+      s.on('connect', () => { s.destroy(); resolve(true); });
+      s.on('timeout', () => { s.destroy(); resolve(false); });
+      s.on('error', () => resolve(false));
+    });
+  }
+
+  static portOwner(port) {
+    try {
+      const out = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpc'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const pid = (out.match(/^p(\d+)/m) || [])[1], cmd = (out.match(/^c(.+)/m) || [])[1];
+      return pid ? `${cmd || 'a process'} (pid ${pid})` : null;
+    } catch { return null; }
+  }
+
+  // replace: stop another ticket's servers first. Without it, a running ticket is refused (code 'busy').
+  async runStart(id, { replace = false, actor } = {}) {
+    const t = this.get(id);
+    const p = this.profile();
+    const dev = (p?.commands?.dev || []).filter(d => isObj(d) && typeof d.command === 'string' && d.command.trim());
+    if (!dev.length) throw new Error('The project profile has no dev commands to run. Add them with /ticketboard:setup');
+    if (!this.trusted()) throw new Error('The project profile is not trusted on this machine yet: review it with board project show, then board project trust');
+    const cwd = t.worktree && fs.existsSync(t.worktree) ? t.worktree : null;
+    if (!cwd) throw new Error(`${t.id} has no worktree to run`);
+    const node = this.nodeEnvFor(cwd);
+    const cur = this.runState();
+    if (cur.running && cur.id !== t.id && !replace) {
+      throw Object.assign(new Error(`${cur.id}'s servers are running. Stop them and start ${t.id}?`), { code: 'busy', running: cur.id, status: 409 });
+    }
+    if (cur.running || readJSON(this.runFile(), null)) await this.runStop({ actor });
+    for (const d of dev.filter(d => Number.isInteger(d.port))) {
+      let busy = await Board.portBusy(d.port);
+      for (let i = 0; busy && i < 20; i++) { await new Promise(res => setTimeout(res, 250)); busy = await Board.portBusy(d.port); }
+      if (busy) {
+        const who = Board.portOwner(d.port);
+        throw new Error(`Port ${d.port} is in use by ${who || 'another program'}, not started from the board. Stop it (e.g. a php artisan serve in a terminal), then run again`);
+      }
+    }
+    fs.mkdirSync(this.tdir(t.id), { recursive: true });
+    const log = this.runLog(t.id);
+    fs.writeFileSync(log, `# ${t.id} servers started ${now()} in ${cwd}${node.note ? `\n# ${node.note}` : ''}\n`);
+    const procs = [];
+    for (const d of dev) {
+      const fd = fs.openSync(log, 'a');
+      fs.writeSync(fd, `\n# [${d.name || 'app'}] ${d.command}\n`);
+      const child = spawn('/bin/sh', ['-c', d.command], { cwd, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...node.env, BOARD_TICKET: t.id } });
+      fs.closeSync(fd);
+      child.on('error', () => {});
+      child.unref();
+      procs.push({ name: d.name || d.command.split(' ')[0], command: d.command, pid: child.pid, started: Board.procStart(child.pid) ?? Date.now(), ...(Number.isInteger(d.port) ? { port: d.port } : {}) });
+    }
+    writeJSON(this.runFile(), { id: t.id, cwd, startedAt: now(), node: node.note || null, procs });
+    this.log(t.id, 'servers-started', { commands: procs.map(x => x.name) }, actor);
+    await new Promise(res => setTimeout(res, 1500)); // let an instant failure (bad command, missing vendor/) show
+    return this.runState();
   }
 
   // ---------- planning preferences ----------
@@ -1602,4 +1810,4 @@ class Board {
   }
 }
 
-module.exports = { Board, DEFAULT_CONFIG, PLAN_STATUSES, TASK_STATUSES, slugify };
+module.exports = { Board, DEFAULT_CONFIG, PLAN_STATUSES, TASK_STATUSES, slugify, nodeFor };
