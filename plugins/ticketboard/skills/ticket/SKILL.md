@@ -87,6 +87,7 @@ Ask with AskUserQuestion how to plan:
 ## Approach (steps, files/areas touched)
 ## Code approach
 - Reuse: existing helpers/traits/models/components this work extends (file paths), and any logic that appears twice and becomes one shared method
+- UI pattern (when it adds or changes screens): the existing section it copies, usually a sibling on the same page (file path and lines), and the components it reuses from it (toggle, select/multiselect, buttons, layout, spacing, messages). New UI matches it; no new widget styles
 - Data access: the queries each part runs; relations eager-loaded for loops; batched writes; no query inside a loop; only the columns needed; nothing loaded twice in one request
 - Writes and concurrency: transactions and row locks for read-check-write on shared rows; files stored outside transactions and cleaned up on failure
 - Validation, authorization and errors: where each lives, following the project's rules
@@ -105,6 +106,7 @@ This step works out **how** the plan gets built, after grilling and before appro
      - the files it will change or add, including its test file
      - the steps, following the patterns already in the code
      - **reuse:** the existing helpers, traits, models, repositories or components it extends (paths), so nothing is written twice
+     - **UI pattern** (frontend tasks): the closest existing section to copy, usually a sibling on the same page or a similar settings screen (path and lines), and which of its components and classes to reuse. The new UI must look like that section: same controls (e.g. a toggle and a role multiselect, not checkboxes), layout, button style, spacing and save behaviour
      - **queries:** what it reads and writes, which relations are eager-loaded, and that nothing queries inside a loop
      - **its test:** the test file to add and the exact command that runs just that test (using the project's test runner), plus one line on what it proves
      - what it depends on
@@ -138,7 +140,7 @@ This step works out **how** the plan gets built, after grilling and before appro
          "files": ["src/auth/permissions.ts", "tests/auth/audit-export-permission.test.ts"],
          "parallel": false,
          "claudesCall": false,
-         "spec": "Steps:\n1. ...\nReuse: extends src/auth/roles.ts (hasPermission)\nQueries: one query, roles eager-loaded; none in loops",
+         "spec": "Steps:\n1. ...\nReuse: extends src/auth/roles.ts (hasPermission)\nUI: copy the SSO section in src/settings/SsoSettings.vue:40-90 (toggle + role multiselect + Save)\nQueries: one query, roles eager-loaded; none in loops",
          "test": {
            "command": "npx jest tests/auth/audit-export-permission.test.ts",
            "description": "a role without audit:export gets 403; the compliance role gets 200"
