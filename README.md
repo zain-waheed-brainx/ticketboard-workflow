@@ -190,11 +190,11 @@ Plan format: Goal, Scope (in and out), Decisions (each with a one-line why), App
 
 **Code quality is planned, not just reviewed.** Before planning, Claude reads the project's rules (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and the standards files they name) and finds the code that already exists. Rules those files settle are applied, never asked. The plan's **Code approach** lists:
 - what gets reused (helpers, traits, models, components) and any logic that becomes one shared method;
-- for screens, the existing section the new UI copies (usually a sibling on the same page), so it uses the same controls, layout and buttons;
+- for screens, the existing section the new UI reuses (usually a sibling on the same page), so it uses the same controls, layout and buttons;
 - the queries: eager loading for loops, batched writes, no query inside a loop, nothing loaded twice;
 - transactions and locks, where validation and authorization live, and limits for new user-data tables.
 
-Each task names what it reuses and what it queries; logic two tasks need becomes one task the others call. Build writes new UI from that section and its ticket review checks every task for duplicated logic, queries in loops, UI that doesn't match its page and the project's rules, and again across the whole ticket at the end.
+Each task names what it reuses and what it queries; logic two tasks need becomes one task the others call. Build writes new UI from that section and its ticket review checks every task for duplicated logic, queries in loops, UI that doesn't reuse its page's sections and the project's rules, and again across the whole ticket at the end.
 
 **Rules files reach worktrees.** When git ignores `CLAUDE.md` or `CLAUDE.local.md`, setup adds them to the files copied into each new worktree, so sessions there follow the same rules.
 
