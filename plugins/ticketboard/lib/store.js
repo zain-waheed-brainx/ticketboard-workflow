@@ -1798,6 +1798,8 @@ class Board {
   // Load an issue for the board's Load / Refresh buttons: runs Claude headless with only the Atlassian connector's
   // read tools allowed (no shell, no files, no Jira writes), and returns the issue, its comments and a title and
   // description rewritten from them. About 20s; uses your Claude login and its Atlassian connector.
+  // Model: Haiku by default to keep each load cheap (set TICKETBOARD_JIRA_MODEL=sonnet for harder issues). The rewrite
+  // is never applied silently: the form shows it before Create, Refresh shows it and applies it only if you accept.
   jiraFetch(url, { current } = {}) {
     const j = parseJira(url);
     const server = process.env.TICKETBOARD_ATLASSIAN_MCP || 'claude_ai_Atlassian_MCP';
@@ -1819,7 +1821,7 @@ class Board {
         const writes = ['executeWrite', 'executeDestructive', 'createJiraIssue', 'editJiraIssue', 'addCommentToJiraIssue',
           'transitionJiraIssue', 'addWorklogToJiraIssue', 'createConfluencePage', 'updateConfluencePage', 'createConfluenceFooterComment',
           'createConfluenceInlineComment', 'showConfluenceEditor'].map(x => `mcp__${server}__${x}`);
-        child = spawn('claude', ['-p', prompt, '--output-format', 'json', '--max-turns', '10', '--model', 'sonnet',
+        child = spawn('claude', ['-p', prompt, '--output-format', 'json', '--max-turns', '10', '--model', process.env.TICKETBOARD_JIRA_MODEL || 'haiku',
           '--setting-sources', '', '--permission-mode', 'dontAsk',
           '--allowedTools', tools.join(' '), '--disallowedTools', [...BUILTIN_DENY, ...writes].join(' ')],
           { cwd: require('os').tmpdir(), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1849,14 +1851,14 @@ class Board {
     });
   }
 
-  // Refresh button: read the issue again, save the snapshot, and update the title and description from it.
+  // Refresh button: read the issue again and save the snapshot. The rewritten title and description come back as a
+  // proposal; the board shows them and applies them only if you accept.
   async jiraRefresh(id, actor) {
     const t = this.get(id);
     if (!t.jira) throw new Error(`${t.id} has no Jira link`);
     const f = await this.jiraFetch(t.jira.url, { current: { title: t.title, description: t.description } });
     const r = this.jiraSave(t.id, f, actor);
-    const ticket = this.update(t.id, { title: f.rewrittenTitle, description: f.rewrittenDescription }, actor);
-    return { ...r, ticket };
+    return { ...r, ticket: undefined, proposal: { title: f.rewrittenTitle, description: f.rewrittenDescription } };
   }
 
   // ---------- planning preferences ----------

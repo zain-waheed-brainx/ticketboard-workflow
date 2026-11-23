@@ -165,7 +165,7 @@ Examples:
 
 On **Create**, the issue, its status and comments are saved with the ticket, and the original Jira title and description are kept, with every earlier snapshot (in `jira-versions/`). Creating without Load reads it right after. **Refresh from Jira** on the ticket reads it again and updates the title and description.
 
-How it reads Jira: the board runs `claude -p` with your settings' allow rules not loaded, every built-in tool except ToolSearch denied, the connector's read tools pre-approved and its write tools denied, on your Claude login and usage. Refreshing asks first, and the replaced text stays in the ticket's history. If your connector has another name, set `TICKETBOARD_ATLASSIAN_MCP`. In chat, `/ticketboard:ticket jira <id>` does the same and also checks the plan against new comments.
+How it reads Jira: the board runs `claude -p` with your settings' allow rules not loaded, every built-in tool except ToolSearch denied, the connector's read tools pre-approved and its write tools denied, on your Claude login and usage. Refresh shows the rewrite and applies it only if you accept; replaced text stays in the ticket's history. If your connector has another name, set `TICKETBOARD_ATLASSIAN_MCP`. It uses Haiku to keep each load cheap; set `TICKETBOARD_JIRA_MODEL=sonnet` for a stronger rewrite. In chat, `/ticketboard:ticket jira <id>` does the same and also checks the plan against new comments.
 
 Jira data stays in `.board/`, which is never committed.
 

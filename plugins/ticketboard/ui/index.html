@@ -451,11 +451,16 @@ async function loadTicket(id, quiet) {
   if ($('#dJiraSync')) $('#dJiraSync').onclick = async e => {
     e.preventDefault();
     const a = e.target; if (a.dataset.busy) return;
-    if (t.jira.refreshed && !confirm(`Read ${t.jira.key} again and replace this ticket's title and description with an update from Jira and its comments? The current text stays in the ticket's history.`)) return;
     a.dataset.busy = '1'; a.textContent = 'Reading Jira…';
     try {
       const r = await api('POST', `/api/tickets/${encodeURIComponent(t.id)}/jira/refresh`, {});
-      toast(`${t.jira.key}: ${r.comments} comment(s), ${r.newComments.length} new. Title and description updated`);
+      const p = r.proposal;
+      const same = p.title === t.title && p.description === (t.description || '');
+      const desc = p.description.length > 600 ? `${p.description.slice(0, 600)}…` : p.description;
+      if (!same && confirm(`${t.jira.key}: ${r.comments} comment(s), ${r.newComments.length} new.\n\nUse this title and description? (The current text stays in the ticket's history.)\n\n${p.title}\n\n${desc}`)) {
+        await api('PATCH', `/api/tickets/${encodeURIComponent(t.id)}`, { title: p.title, description: p.description });
+        toast('Title and description updated from Jira');
+      } else toast(same ? `${t.jira.key}: no change` : 'Jira data saved; title and description kept');
       await load();
     } catch (err) {
       if (confirm(`${err.message}\n\nImport in a Claude session instead?`)) openClaude(S.root, `/ticketboard:ticket jira ${t.id}`, `import ${t.jira.key} from Jira`);
