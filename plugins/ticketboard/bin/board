@@ -1,4 +1,7 @@
-#!/usr/bin/env node
+#!/bin/sh
+":" //; # Shell part: find Node 18+ even when node isn't on PATH (plain shells, the desktop app), then run this file.
+":" //; N="${NVM_DIR:-$HOME/.nvm}"; D=$(cat "$N/alias/default" 2>/dev/null); for n in "$(command -v node 2>/dev/null)" "$N/versions/node/v${D#v}"*/bin/node "$N"/versions/node/v*/bin/node /opt/homebrew/bin/node /usr/local/bin/node; do [ -x "$n" ] && "$n" -e 'process.exit(+process.versions.node.split(".")[0] < 18 ? 1 : 0)' 2>/dev/null && exec "$n" "$0" "$@"; done
+":" //; echo "board: needs Node 18 or newer, and none was found on PATH, in nvm or in Homebrew. Install it: nvm install 24" >&2; exit 127
 // Ticketboard CLI. Run from the main checkout or any of its worktrees.
 const fs = require('fs');
 const path = require('path');
