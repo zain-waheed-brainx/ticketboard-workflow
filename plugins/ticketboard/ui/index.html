@@ -265,6 +265,7 @@ body.noscroll { overflow: hidden; }
 
 <div class="modal" id="mRunLog"><div class="mbox" style="max-width:900px;width:100%">
   <h3>Server output <code id="rlId"></code></h3>
+  <div id="rlHints"></div>
   <pre id="rlText" style="max-height:60vh;overflow:auto;font-size:11px;white-space:pre-wrap;background:var(--panel2);padding:8px;border-radius:6px"></pre>
   <div class="actions"><button data-close>Close</button></div>
 </div></div>
@@ -326,6 +327,8 @@ function renderRunBar() {
   const bar = $('#runBar');
   if (!RUN.id) { bar.style.display = 'none'; return; }
   bar.style.display = 'flex';
+  const hintCount = (RUN.hints || []).length + (RUN.setup?.hints || []).length;
+  const fixLink = hintCount ? ` <a href="#" id="rbFix" style="color:var(--warn);font-weight:600">How to fix</a>` : '';
   const setupWarn = RUN.setup ? ` <span style="color:var(--warn)" title="Worktree setup step failed: ${esc(RUN.setup.failed.join(', '))}. Open the ticket's Setup log to see why and retry.">⚠ setup step failed</span>` : '';
   if (RUN.installing) {
     bar.innerHTML = `<span class="chip" style="color:var(--warn)">⏳ ${esc(RUN.id)} installing ${esc((RUN.missing || []).join(', '))}</span> <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Cancel</a>`;
@@ -334,17 +337,28 @@ function renderRunBar() {
     return;
   }
   if (!RUN.running) {
-    bar.innerHTML = `<span class="chip" style="color:var(--danger)" title="${esc(RUN.error || '')}">■ ${esc(RUN.id)} ${RUN.error ? 'not started' : 'servers stopped'}</span>${setupWarn} <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Dismiss</a>`;
+    bar.innerHTML = `<span class="chip" style="color:var(--danger)" title="${esc(RUN.error || '')}">■ ${esc(RUN.id)} ${RUN.error ? 'not started' : 'servers stopped'}</span>${setupWarn}${fixLink} <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Dismiss</a>`;
     $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
+    if ($('#rbFix')) $('#rbFix').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
     $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
     return;
   }
   const down = RUN.crashed?.length ? ` <span style="color:var(--danger)" title="Stopped on its own: check the output">${esc(RUN.crashed.join(', '))} down</span>` : '';
-  bar.innerHTML = `<span class="chip">▶ ${esc(RUN.id)} running</span>${down}${setupWarn}`
+  bar.innerHTML = `<span class="chip">▶ ${esc(RUN.id)} running</span>${down}${setupWarn}${fixLink}`
     + (RUN.url ? ` <a href="${esc(RUN.url)}" target="_blank" rel="noopener noreferrer">Open app</a>` : '')
     + ` <a href="#" id="rbLog">Output</a> <a href="#" id="rbStop">Stop</a>`;
   $('#rbLog').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
+  if ($('#rbFix')) $('#rbFix').onclick = e => { e.preventDefault(); showRunLog(RUN.id); };
   $('#rbStop').onclick = async e => { e.preventDefault(); await stopRun(); };
+}
+// What went wrong and how to fix it, above the server output.
+function renderRunHints() {
+  const box = $('#rlHints');
+  const list = RUN.id === $('#rlId').textContent ? [...(RUN.hints || []), ...(RUN.setup?.hints || [])] : [];
+  box.innerHTML = list.length ? `<div style="border:1px solid var(--warn);border-radius:6px;padding:8px 10px;margin-bottom:8px">
+    <b>How to fix</b>${list.map((h, i) => `<div style="margin-top:6px"><b style="color:var(--danger)">✗ ${esc(h.problem)}</b><br><span class="hint">${esc(h.fix)}</span>${h.cmd
+      ? `<br><code>${esc(h.cmd)}</code> <button class="ghost" data-hcopy="${i}" style="padding:1px 6px;font-size:11px">Copy</button>` : ''}</div>`).join('')}</div>` : '';
+  box.querySelectorAll('button[data-hcopy]').forEach(btn => btn.onclick = () => copyText(list[+btn.dataset.hcopy].cmd, 'Command'));
 }
 function renderRunButton() {
   if (!openData) return;
@@ -376,6 +390,7 @@ async function showRunLog(id) {
     const pre = $('#rlText');
     const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
     try { pre.textContent = (await api('GET', `/api/tickets/${encodeURIComponent(id)}/run-log`)).log || '(no output yet)'; } catch (e) { pre.textContent = e.message; }
+    renderRunHints();
     if (atEnd) pre.scrollTop = pre.scrollHeight;
   };
   clearInterval(runLogTimer); await pull(); runLogTimer = setInterval(pull, 2000);

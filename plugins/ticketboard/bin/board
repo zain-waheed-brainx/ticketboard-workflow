@@ -2,7 +2,7 @@
 // Ticketboard CLI. Run from the main checkout or any of its worktrees.
 const fs = require('fs');
 const path = require('path');
-const { Board } = require('../lib/store');
+const { Board, ensureLoginPath } = require('../lib/store');
 const project = require('../lib/project');
 
 const HELP = `board <command>
@@ -160,6 +160,8 @@ async function main() {
     if (!isGit || rows.some(r => !r.ok)) process.exitCode = 1;
     return;
   }
+  // Commands that run project tools: make sure php, composer etc. are on PATH even under the desktop app.
+  if (['serve', 'run', 'bootstrap', 'start', 'new', 'adopt', 'prepare', 'test', 'test-all', 'reopen'].includes(cmd)) ensureLoginPath();
   const b = new Board(cwd);
   if (!['init', 'project'].includes(cmd)) b.ensure();
 
@@ -344,13 +346,14 @@ async function main() {
     }
     case 'run': {
       const warn = s => s.setup ? `\nworktree setup step failed: ${s.setup.failed.join(', ')} (board bootstrap ${s.id} to retry)` : '';
+      const fixes = s => [...(s.hints || []), ...(s.setup?.hints || [])].map(h => `\n  ✗ ${h.problem}: ${h.fix}${h.cmd ? `\n      ${h.cmd}` : ''}`).join('');
       const show = s => s.installing
         ? `${s.id}: installing ${s.missing.join(', ')} first, then starting. Watch: board run --log ${s.id}`
-        : s.error ? `${s.id} not started: ${s.error}${warn(s)}`
+        : s.error ? `${s.id} not started: ${s.error}${warn(s)}${fixes(s)}`
         : !s.running && s.id
-        ? `${s.id}'s servers all stopped on their own (${s.crashed.join(', ')}). See why: board run --log ${s.id}`
+        ? `${s.id}'s servers all stopped on their own (${s.crashed.join(', ')}). See why: board run --log ${s.id}${fixes(s)}`
         : s.running
-        ? `${s.id} running in ${s.cwd}\n${s.procs.map(p => `  ${p.alive ? 'up  ' : 'DOWN'} ${p.name}: ${p.command}`).join('\n')}${s.node ? `\n${s.node}` : ''}${s.url ? `\nopen: ${s.url}` : ''}${warn(s)}`
+        ? `${s.id} running in ${s.cwd}\n${s.procs.map(p => `  ${p.alive ? 'up  ' : 'DOWN'} ${p.name}: ${p.command}`).join('\n')}${s.node ? `\n${s.node}` : ''}${s.url ? `\nopen: ${s.url}` : ''}${warn(s)}${fixes(s)}`
         : 'Nothing running';
       if (flags.stop) { const r = await b.runStop(); return out(r.stopped ? `stopped ${r.stopped}'s servers` : 'Nothing was running'); }
       if (flags.status || !pos[0] && !flags.log) return out(flags.json ? b.runState() : show(b.runState()), flags.json);

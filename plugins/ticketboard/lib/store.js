@@ -168,6 +168,82 @@ async function cloneDir(src, dest) {
   return { how };
 }
 
+// A board started by the desktop app gets a bare PATH (no Homebrew), so php, composer or mysql look missing.
+// Add the user's login-shell PATH and the usual tool folders, once per process.
+let pathFixed = false;
+function ensureLoginPath() {
+  if (pathFixed) return;
+  pathFixed = true;
+  const home = require('os').homedir();
+  const extra = [];
+  try {
+    const out = execFileSync(process.env.SHELL || '/bin/zsh', ['-ilc', 'printf "__TB_PATH__%s" "$PATH"'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const m = out.match(/__TB_PATH__(.*)$/s);
+    if (m) extra.push(...m[1].trim().split(path.delimiter));
+  } catch {}
+  extra.push('/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', path.join(home, '.composer/vendor/bin'),
+    path.join(home, '.config/composer/vendor/bin'), path.join(home, 'Library/Application Support/Herd/bin'));
+  const cur = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  process.env.PATH = [...new Set([...cur, ...extra.filter(d => d && !cur.includes(d) && fs.existsSync(d))])].join(path.delimiter);
+}
+
+// Known failures in server or setup output, each with what's wrong and how to fix it. First match per problem.
+const HINTS = [
+  [/Cannot find module '[^./'][^']*'|node_modules missing|cross-env: command not found|webpack: command not found|mix: command not found/,
+    () => ({ problem: 'Node packages are missing', fix: 'Click Run app again: it clones node_modules from the main checkout first.' })],
+  [/vendor\/autoload\.php/, () => ({ problem: 'PHP packages (vendor) are missing', fix: 'Click Run app again: it clones vendor from the main checkout first.' })],
+  [/lock file is not up to date|not present in the lock file/, () => ({ problem: 'composer.lock is out of date with composer.json',
+    fix: 'The app still runs: vendor was cloned from the main checkout. To fix it for good, update composer.lock in the repo and commit it.' })],
+  [/([\w.-]+): command not found|command not found: ([\w.-]+)/, m => ({ problem: `${m[1] || m[2]} wasn't found`,
+    fix: `Check it runs in a terminal (which ${m[1] || m[2]}). If it does, restart the board so it picks up your PATH; if not, install it.` })],
+  [/Address already in use|Failed to listen on [\w.]+:(\d+)/, m => ({ problem: `Port ${m[1] || ''} is already in use`.replace('  ', ' '),
+    fix: 'Stop whatever else is serving that port (e.g. a php artisan serve in a terminal), then Run app again.', cmd: m[1] ? `lsof -nP -iTCP:${m[1]} -sTCP:LISTEN` : null })],
+  [/SQLSTATE\[HY000\] \[2002\]|Can't connect to (local )?MySQL/i, () => ({ problem: "MySQL isn't running", fix: 'Start MySQL, then Run app again.', cmd: 'brew services list | grep -i mysql' })],
+  [/SQLSTATE\[HY000\] \[1045\]/, () => ({ problem: 'The database refused the login', fix: "Check DB_USERNAME and DB_PASSWORD in the worktree's .env." })],
+  [/SQLSTATE\[HY000\] \[1049\]|Unknown database/, () => ({ problem: "The database doesn't exist", fix: "Create it, or fix DB_DATABASE in the worktree's .env." })],
+  [/(Connection refused|Connection timed out).{0,80}6379|redis.{0,80}Connection refused/is, () => ({ problem: "Redis isn't running", fix: 'Start Redis, then Run app again.', cmd: 'brew services start redis' })],
+  [/No application encryption key/, () => ({ problem: 'APP_KEY is missing in .env', fix: "Copy APP_KEY from the main checkout's .env into the worktree's .env." })],
+  [/Class ["']?[\w\\]+["']? not found/, () => ({ problem: 'A PHP class is missing', fix: 'If the class exists in the code, regenerate the autoloader; if not, the code refers to a class that is missing.', cmd: 'composer dump-autoload' })],
+  [/Allowed memory size of \d+ bytes exhausted/, () => ({ problem: 'PHP ran out of memory', fix: 'Raise memory_limit in php.ini, or check for a loop loading too much.' })]
+];
+
+function diagnose(text, cwd) {
+  const out = [];
+  for (const [re, make] of HINTS) {
+    const m = String(text || '').match(re);
+    if (!m) continue;
+    const h = make(m);
+    if (out.some(o => o.problem === h.problem)) continue;
+    if (h.cmd && cwd && !/^(brew|lsof)\b/.test(h.cmd)) h.cmd = `cd '${String(cwd).replace(/'/g, `'\\''`)}' && ${h.cmd}`;
+    if (!h.cmd) delete h.cmd;
+    out.push(h);
+  }
+  return out;
+}
+
+// An install step has nothing to do when its folder came from the main checkout and the worktree's manifest
+// and lock files are byte-for-byte the main checkout's. Skipping it also avoids failures from a stale lock.
+const INSTALLS = [
+  { re: /^composer install\b/, dir: 'vendor', files: ['composer.json', 'composer.lock'] },
+  { re: /^(npm (ci|install|i)|yarn( install)?|pnpm (i|install)|bun install)(\s+--?[\w-]+)*\s*$/, dir: 'node_modules',
+    files: ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'] }
+];
+function installUpToDate(cmd, wt, root, cloned) {
+  const m = cmd.trim().match(/^cd\s+("?)([^"&]+)\1\s*&&\s*(.+)$/);
+  const sub = m ? m[2].trim() : '', step = m ? m[3].trim() : cmd.trim();
+  const rule = INSTALLS.find(r => r.re.test(step));
+  if (!rule || sub.split(/[\\/]/).includes('..')) return null;
+  const at = (base, f) => path.join(base, sub, f);
+  if (!cloned.has(path.join(sub, rule.dir))) return null; // only a folder the board cloned is known to be complete
+  if (!fs.existsSync(at(wt, rule.dir)) || !fs.existsSync(at(root, rule.dir))) return null;
+  const read = f => { try { return fs.readFileSync(f); } catch { return null; } };
+  const present = rule.files.filter(f => fs.existsSync(at(wt, f)) || fs.existsSync(at(root, f)));
+  if (!present.length) return null;
+  const same = present.every(f => { const a = read(at(wt, f)), b = read(at(root, f)); return a && b && a.equals(b); });
+  return same ? `${path.join(sub, rule.dir)} matches the main checkout (same ${present.join(', ')})` : null;
+}
+
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
@@ -1155,10 +1231,12 @@ class Board {
     const write = s => { fs.appendFileSync(logFile, s); if (onOutput) onOutput(s); };
     fs.writeFileSync(logFile, `# bootstrap ${t.id} ${now()}\n`);
     const generated = [];
+    const cloned = new Set(t.clonedDeps || []);
     const setStatus = (status, extra = {}) => {
       const cur = this.get(t.id);
       cur.bootstrap = { status, ts: now(), ...extra };
       if (generated.length) cur.generatedFiles = [...new Set([...(cur.generatedFiles || []), ...generated])];
+      cur.clonedDeps = [...cloned];
       this.save(cur);
     };
     setStatus('running');
@@ -1178,6 +1256,7 @@ class Board {
       write(`cloning ${d} from the main checkout... `);
       const r = await cloneDir(src, dest);
       write(r.error ? `failed (${r.error}); setup will install it\n` : `${r.how}\n`);
+      if (!r.error) cloned.add(path.normalize(d));
     }
     const dev = p.commands?.dev || [];
     if (p.worktree?.launch !== false && dev.length && !fs.existsSync(path.join(wt, '.claude', 'launch.json'))) {
@@ -1203,6 +1282,8 @@ class Board {
     const failures = [];
     for (const cmd of p.worktree?.setup || []) {
       write(`\n$ ${cmd}\n`);
+      const upToDate = installUpToDate(cmd, wt, this.root, cloned);
+      if (upToDate) { write(`skipped: ${upToDate}\n`); continue; }
       const code = await new Promise(resolve => {
         const child = spawn(cmd, { cwd: wt, shell: true, env: { ...process.env, CI: process.env.CI || '1', ...nodeEnv(node) } });
         child.stdout.on('data', d => write(String(d)));
@@ -1717,12 +1798,14 @@ class Board {
         ? { running: false, installing: true, id: r.id, startedAt: r.startedAt, cwd: r.cwd, missing: r.installing.missing || [], procs: [], crashed: [] }
         : { running: false, id: r.id, cwd: r.cwd, error: 'Setup stopped before the servers started (the board closed?). Run app again.', procs: [], crashed: [] };
     }
-    if (r.error) return { running: false, id: r.id, cwd: r.cwd, error: r.error, procs: [], crashed: [], ...(setup ? { setup } : {}) };
+    if (r.error) return { running: false, id: r.id, cwd: r.cwd, error: r.error, procs: [], crashed: [], hints: this.runHints(r.id, r.cwd, r.error), ...(setup ? { setup } : {}) };
     const procs = r.procs.map(p => ({ ...p, alive: Board.alive(p) }));
     const running = procs.some(p => p.alive);
     const port = procs.find(p => p.port)?.port;
     const url = this.config().run?.url || (port ? `http://localhost:${port}` : null);
-    return { running, id: r.id, startedAt: r.startedAt, cwd: r.cwd, node: r.node || null, procs, url, crashed: procs.filter(p => !p.alive).map(p => p.name), ...(setup ? { setup } : {}) };
+    const crashed = procs.filter(p => !p.alive).map(p => p.name);
+    const hints = crashed.length ? this.runHints(r.id, r.cwd) : [];
+    return { running, id: r.id, startedAt: r.startedAt, cwd: r.cwd, node: r.node || null, procs, url, crashed, hints, ...(setup ? { setup } : {}) };
   }
 
   // The running ticket's failed worktree setup, so the board can say why something may be off.
@@ -1731,7 +1814,29 @@ class Board {
     try { t = id && this.get(id); } catch { return null; }
     const b = t?.bootstrap;
     if (b?.status !== 'failed' && b?.status !== 'warning') return null;
-    return { command: b.command || null, failed: Array.isArray(b.failures) ? b.failures.map(f => f.command) : [b.command].filter(Boolean) };
+    return { status: b.status, command: b.command || null, failed: Array.isArray(b.failures) ? b.failures.map(f => f.command) : [b.command].filter(Boolean),
+      hints: diagnose(this.bootstrapLog(t.id), t.worktree) };
+  }
+
+  // Start and end of a long log: a server that dies at once prints its error near the top, while a watcher
+  // keeps writing below it.
+  // Hints for a ticket's run log, worked out again only when the log changes (runState is polled).
+  runHints(id, cwd, extra = '') {
+    let key;
+    try { const st = fs.statSync(this.runLog(this.get(id).id)); key = `${id}:${st.size}:${st.mtimeMs}:${extra}`; } catch { key = `${id}:none:${extra}`; }
+    if (this.hintCache?.key !== key) this.hintCache = { key, hints: diagnose(`${extra}\n${this.runLogEnds(id)}`, cwd) };
+    return this.hintCache.hints;
+  }
+
+  runLogEnds(id, bytes = 30000) {
+    let head = '';
+    let fd;
+    try {
+      fd = fs.openSync(this.runLog(this.get(id).id), 'r');
+      const buf = Buffer.alloc(bytes);
+      head = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, bytes, 0));
+    } catch {} finally { if (fd !== undefined) fs.closeSync(fd); }
+    return `${head}\n${this.runLogTail(id, bytes)}`;
   }
 
   runLogTail(id, bytes = 20000) {
@@ -2108,4 +2213,4 @@ class Board {
   }
 }
 
-module.exports = { Board, DEFAULT_CONFIG, PLAN_STATUSES, TASK_STATUSES, slugify, nodeFor };
+module.exports = { Board, DEFAULT_CONFIG, PLAN_STATUSES, TASK_STATUSES, slugify, nodeFor, ensureLoginPath, diagnose };

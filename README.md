@@ -228,6 +228,7 @@ Then you **approve the plan and its tasks together**, in chat or with **Approve 
 - runs worktree setup: copies `.env`, clones `vendor` and `node_modules` from the main folder, writes `.claude/launch.json`, and runs install.
   - **Clone, not copy:** on macOS (APFS) the clone is near instant and uses no extra disk until a file changes. Elsewhere it's a plain copy. Install then only fixes what differs on the branch.
   - Set which folders in the profile's `worktree.cloneDeps` (`[]` turns it off). Only folders git ignores are cloned.
+  - **Installs skip when nothing changed:** if the worktree's `composer.json`/`composer.lock` (or `package.json` and its lock) match the main folder's, the cloned folder is already right and the install is skipped. A branch that changes them installs as usual.
   - **A failed step doesn't stop the rest.** A stale `composer.lock` still lets `npm install` run. The ticket shows which steps failed.
   - **Warning, not failure:** if a step fails but `vendor` and `node_modules` are in place, setup shows **warning** and build carries on without asking. Claude never copies them itself.
 
@@ -301,6 +302,8 @@ Grilling only covers what's new. Earlier rounds' branches, PRs and tasks stay in
 - **Clean up and Delete** stop the ticket's servers first.
 - **Nothing installed?** If the worktree lacks `vendor` or `node_modules`, Run app runs worktree setup first, then starts the servers. The bar shows **installing**; **Cancel** stops the start.
 - **Setup failed** shows as a warning in the bar, with the failed steps.
+- **How to fix:** when a server dies or setup fails, the bar shows **How to fix**. It names the problem (PHP not found, MySQL or Redis down, port in use, missing packages, stale `composer.lock`…) and the fix, with a command to copy.
+- **Started from the desktop app**, the board loads your shell's PATH, so `php` and `composer` from Homebrew are found.
 - Commands come from the profile's `commands.dev` and only run once the profile is trusted. Setup detects Horizon when `laravel/horizon` is installed.
 
 **Node version per project.** Run, worktree setup and tests use the Node version the project asks for: `.nvmrc` or `.node-version` in the worktree, else an exact `versions.node` in the profile. It's picked from nvm's installed versions (exact, else the newest with the same major.minor, else the same major) and put first on PATH, so `npm` and `node` use it. If nvm doesn't have it, the command stops and says `nvm install <version>`.
