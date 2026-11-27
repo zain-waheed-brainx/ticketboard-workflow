@@ -128,6 +128,7 @@ What it does:
 | `/ticketboard:ticket` | Everything about a ticket: `new`, `plan`, `tasks`, `start`, `reopen`, `share`, `edit`, `delete` (and `resume`, which hands over to the resume skill) |
 | `/ticketboard:build <id>` | Build an approved ticket task by task in its worktree: test first, two reviews, then commit |
 | `/ticketboard:pr <id>` | Open the PR, handle review comments (with your approval), and clean up after the merge |
+| `/ticketboard:merge <source> [into <target>]` | Merge two branches, resolving each conflict from both branches' change logs (keep one side or combine), then test. Works on any branches. Never commits without asking |
 | `/ticketboard:resume [id]` | Pick work back up in any chat: gets the worktree ready, loads all the context, and continues where you stopped |
 
 Examples:
@@ -237,6 +238,7 @@ Then you **approve the plan and its tasks together**, in chat or with **Approve 
 1. **Write the test first** and run it. It must **fail**, because the feature isn't there yet.
 2. **Write the code** from the task's spec, then run the test. It must **pass**.
 3. **Ticket review** (Claude, no skill): does it do everything the spec says, nothing outside the ticket's scope, and does the test really prove the spec?
+   - Then the **change log**: Claude adds the task's entries to `docs/changes/<ref>.md` in the branch (see below).
 4. **Code review:**
    - First Claude's own check for bugs, edge cases, error handling, debug code and lint.
    - Then the repo's review hook if it has one. Otherwise the `brainx:code-review` skill, then the `code-review` skill, then a careful read of the diff.
@@ -247,6 +249,16 @@ At the end:
 - `test-all` runs every task's test, then the project's full test command.
 - A **whole-ticket review** checks the work against the plan's goal, scope, decisions and "Done when" items.
 - Then the final commit, or the handover in no-commit mode.
+
+### Change log (in the branch)
+Each branch keeps `docs/changes/<ref>.md`: one entry per changed function, method, component or config key, under its file, with:
+- **What** changed;
+- **Why** (the reason, from the ticket);
+- **Keep**: what must survive any merge (behaviour, rules, fields other code relies on).
+
+Build writes it as each task is done, review fixes update it, and it's committed with the code. One file per branch, so logs never conflict with each other.
+
+**Merging:** `/ticketboard:merge feature/a into develop` reads both branches' logs. For each conflict it combines both changes when both are still needed, keeps one side when the other is replaced, and asks you only when the two contradict. It also checks code both sides changed that git merged without a conflict, runs the tests, and leaves the merge staged with a table of its decisions. Branches without a log fall back to their commits and diff.
 
 ### 6. Pull request
 `/ticketboard:pr <id>`, or **Open PR** on the board. The panel shows:

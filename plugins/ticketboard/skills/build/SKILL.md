@@ -40,7 +40,7 @@ Repeat until `board next <id> --json` reports `allDone`.
    - the **Your preferences** section from `board show`
    - these four steps
 
-   Tell each one to change **only its own files**, not to commit, and to report the result of its `--before` run, what it changed, and anything it couldn't do. When they're all back, run each task's after-run (`board test <id> <T#>`) yourself, one at a time.
+   Tell each one to change **only its own files**, not to commit, and to report the result of its `--before` run, what it changed (as change-log entries: file, function, what, why, keep), and anything it couldn't do. Only you write the change log. When they're all back, run each task's after-run (`board test <id> <T#>`) yourself, one at a time.
 4. **Ticket review, every task, in both commit modes.** Before any code review, check that the task does what the ticket asked. Do it yourself, without a review skill.
    - Read the whole diff (`git -C <worktree> diff`, plus new files).
    - **Spec:** does it do everything the task's spec says, following the plan's decisions?
@@ -52,6 +52,7 @@ Repeat until `board next <id> --json` reports `allDone`.
    - **Project rules:** does it follow `CLAUDE.md` / `CLAUDE.local.md` (comments on new functions, where validation and authorization go, transactions and locks)? Changes unrelated to the ticket stay out.
    - **Preferences:** does it follow **Your preferences** from `board show`, unless the plan says otherwise?
    - Fix any gap, re-run the task's test (`board test <id> <T#>`), and only then go on to code review.
+   - **Change log:** add or update this task's entries in the branch's change log (see **Change log** below). It's part of the task's changes, so it's reviewed and committed (or staged, in `none` mode) with them.
 
    `board task <id> <T#> status=done` refuses until the task's after-run has passed.
 5. **Code review, then commit, following `commitMode`** (from `board next <id> --json`). A commit always comes after a ticket review (step 4) and a code review that passed. In `per-task` mode that's every task. In `single` mode the code review and commit happen once, at the end (section 3), on the whole ticket's changes. In `none` mode the code review happens once at the end and **you never commit**: the user commits.
@@ -80,6 +81,32 @@ Repeat until `board next <id> --json` reports `allDone`.
    - **`all`:** go straight to the next batch with no question. After each task, give a one-line progress update (e.g. `T3 done (abc1234), 3/6`).
    - **Either mode:** always stop and ask when tests fail and you can't fix them, when a task needs a decision the plan doesn't cover, or when a change would land outside the ticket's files.
 
+## Change log
+Every branch keeps a change log in the branch itself: `docs/changes/<ref>.md`, where `<ref>` is the ticket's number (e.g. `ABC-123`), or its board id when it has none. The header's `Board:` is the board id. One file per branch, so two branches never edit the same log, and the **merge** skill reads both sides' logs to resolve conflicts. Write it for a reader who has to combine this branch with another one later: what each change is for matters more than how it's written.
+
+```
+# ABC-123: Add order export
+Branch: feature/ABC-123_order-export · Base: main · Board: WWL-8
+
+## app/Http/Controllers/OrderController.php
+### index()
+- What: accepts ?format=csv and streams the filtered orders as a CSV.
+- Why: support exports what they see on screen, with the same filters.
+- Keep: the JSON response and its pagination are unchanged for API clients.
+- Task: T2
+
+## resources/js/components/Orders.vue
+### Export button (new)
+- What: button in the toolbar, matching the existing Print button.
+- Why: one click to export the current filter.
+- Keep: toolbar order and the Print button's behaviour.
+- Task: T3
+```
+- **One entry per changed function, method, component or config key** (not per line), under its file. Use `(new)` for added code and `(removed)` for deleted code, with why it went.
+- **Keep** is what must survive any merge: behaviour, rules, fields other code relies on. A merge that loses a Keep is wrong.
+- **Same piece changed again** (by a later task or a review fix): update its entry, don't add a second one.
+- Leave out files that only hold tests, the log itself, or generated output.
+
 ## Rules
 - **Follow the plan.** A task that turns out to need a decision the plan doesn't cover goes back to the user (one AskUserQuestion). Mark it in the note.
 - **Never skip a task silently.** To skip one, ask first, then `board task <id> <T#> status=skipped note="<why>"`.
@@ -88,7 +115,7 @@ Repeat until `board next <id> --json` reports `allDone`.
 ## 3. Done
 When every task is done:
 1. **Run every test together:** `board test-all <id>`. It runs each task's test in order, then the project's full test command. Everything must pass. A test that passed on its own but fails together usually means two tasks interfere with each other: find out why, fix it (that's work on the task that caused it), and run `test-all` again. If you can't fix it, stop and ask. Don't commit or report "ready" with failing tests.
-2. **Ticket review of the whole ticket.** Before any final code review or commit, check the finished work against the plan as a whole: its Goal, Scope (in and out), Decisions and **Code approach**. Across all tasks together, look again for duplicated logic, for queries in loops, and for breaks in design consistency with the page, since those often appear between tasks. Look for anything missing, half done, or built beyond scope, including gaps between tasks that no single task's review would show. Then go through each "Done when" item. Check the ones you can actually verify (run the test, try the command) and tick them with `board done-when <id> <n>`. List the ones you couldn't verify. Fix any gap (in `per-task` mode the fix is a new commit, with its own code review), and re-run `board test-all <id>`.
+2. **Ticket review of the whole ticket.** Before any final code review or commit, check the finished work against the plan as a whole: its Goal, Scope (in and out), Decisions and **Code approach**. Across all tasks together, look again for duplicated logic, for queries in loops, and for breaks in design consistency with the page, since those often appear between tasks. Look for anything missing, half done, or built beyond scope, including gaps between tasks that no single task's review would show. Check the change log covers every file and function the ticket changed, with nothing stale left from earlier rounds. Then go through each "Done when" item. Check the ones you can actually verify (run the test, try the command) and tick them with `board done-when <id> <n>`. List the ones you couldn't verify. Fix any gap (in `per-task` mode the fix is a new commit, with its own code review), and re-run `board test-all <id>`.
 3. **`single` commit mode:** code-review the whole ticket and make the one commit now, with the same rules as step 5 of the loop.
    - Run `git -C <wt> add -A` (check `git status` first, so only this ticket's work goes in).
    - Self code review of the whole staged diff first, without a skill. Fix what you find and re-run `board test-all <id>`.
